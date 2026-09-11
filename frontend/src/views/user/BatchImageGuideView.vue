@@ -1,5 +1,5 @@
 <template>
-  <AppLayout>
+  <component :is="layoutComponent" :class="{ 'batch-image-embedded': embedded }">
     <TablePageLayout>
       <template #filters>
         <div class="flex flex-col gap-3">
@@ -748,7 +748,7 @@
         </div>
       </template>
     </BaseDialog>
-  </AppLayout>
+  </component>
 </template>
 
 <script setup lang="ts">
@@ -785,6 +785,12 @@ import {
 } from '@/api/batchImage'
 import type { ApiKey } from '@/types'
 import type { Column } from '@/components/common/types'
+
+const { embedded = false } = withDefaults(defineProps<{ embedded?: boolean }>(), {
+  embedded: false,
+})
+
+const layoutComponent = computed(() => (embedded ? 'div' : AppLayout))
 
 type BatchImageJobRow = Pick<BatchImageJob, 'id' | 'task_name' | 'parent_batch_id' | 'status' | 'model' | 'provider' | 'item_count' | 'success_count' | 'fail_count' | 'estimated_cost' | 'hold_amount' | 'actual_cost' | 'created_at' | 'downloaded_at'> & {
   api_key_id: number
@@ -2650,6 +2656,15 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.batch-image-embedded {
+  @apply flex min-h-0 flex-1 flex-col;
+}
+
+.batch-image-embedded :deep(.table-page-layout) {
+  height: 100%;
+  min-height: 0;
+}
+
 .batch-row-action {
   display: flex !important;
   flex-direction: column !important;

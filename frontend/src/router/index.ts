@@ -218,21 +218,61 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/batch-image',
     name: 'BatchImageGuide',
-    alias: '/docs/batch-image',
-    component: () => import('@/views/user/BatchImageGuideView.vue'),
-    meta: {
-      requiresAuth: true,
-      requiresAdmin: false,
-      title: 'Batch Image Guide',
-      titleKey: 'batchImageGuide.title',
-      descriptionKey: 'batchImageGuide.description'
-    }
+    redirect: '/creative/image',
+    meta: { requiresAuth: true, requiresAdmin: false }
+  },
+  {
+    path: '/docs/batch-image',
+    redirect: '/creative/image',
+    meta: { requiresAuth: true, requiresAdmin: false }
   },
   {
     path: '/creative',
     name: 'CreativeCenter',
     component: () => import('@/views/user/CreativeCenterView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: false, title: 'Creative Center' }
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Creative Center',
+      titleKey: 'creativeCenter.title',
+      descriptionKey: 'creativeCenter.description'
+    }
+  },
+  {
+    path: '/creative/image',
+    name: 'CreativeCenterImage',
+    component: () => import('@/views/user/CreativeCenterView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Creative Center',
+      titleKey: 'creativeCenter.title',
+      descriptionKey: 'creativeCenter.description'
+    }
+  },
+  {
+    path: '/creative/video',
+    name: 'CreativeCenterVideo',
+    component: () => import('@/views/user/CreativeCenterView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Creative Center',
+      titleKey: 'creativeCenter.title',
+      descriptionKey: 'creativeCenter.description'
+    }
+  },
+  {
+    path: '/creative/history',
+    name: 'CreativeCenterHistory',
+    component: () => import('@/views/user/CreativeCenterView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Creative Center',
+      titleKey: 'creativeCenter.title',
+      descriptionKey: 'creativeCenter.description'
+    }
   },
   {
     path: '/usage',
