@@ -62,6 +62,31 @@
                 </div>
               </div>
 
+              <div class="flex items-center rounded-lg border border-gray-200 bg-gray-50 p-0.5 dark:border-dark-700 dark:bg-dark-800" role="group" :aria-label="t('admin.accounts.viewMode')">
+                <button
+                  type="button"
+                  class="inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  :class="viewMode === 'table' ? 'bg-white text-primary-600 shadow-sm dark:bg-dark-700 dark:text-primary-300' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+                  :aria-pressed="viewMode === 'table'"
+                  :aria-label="t('admin.accounts.tableView')"
+                  :title="t('admin.accounts.tableView')"
+                  @click="setViewMode('table')"
+                >
+                  <Icon name="menu" size="sm" />
+                </button>
+                <button
+                  type="button"
+                  class="inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  :class="viewMode === 'cards' ? 'bg-white text-primary-600 shadow-sm dark:bg-dark-700 dark:text-primary-300' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'"
+                  :aria-pressed="viewMode === 'cards'"
+                  :aria-label="t('admin.accounts.cardView')"
+                  :title="t('admin.accounts.cardView')"
+                  @click="setViewMode('cards')"
+                >
+                  <Icon name="grid" size="sm" />
+                </button>
+              </div>
+
               <!-- More Tools Dropdown -->
               <div class="relative" ref="accountToolsDropdownRef">
                 <button
@@ -191,8 +216,32 @@
           @select-all-results="handleSelectAllResults"
           @toggle-schedulable="handleBulkToggleSchedulable"
         />
-        <div ref="accountTableRef" class="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div ref="accountTableRef" class="flex min-h-0 flex-1 flex-col" :class="viewMode === 'cards' ? 'overflow-y-auto' : 'overflow-hidden'">
+        <AccountCardGrid
+          v-if="viewMode === 'cards'"
+          :accounts="accounts"
+          :groups="groups"
+          :selected-ids="selIds"
+          :loading="loading"
+          :stats-by-account-id="todayStatsByAccountId"
+          :stats-loading="todayStatsLoading"
+          :stats-error="todayStatsError"
+          :manual-refresh-token="usageManualRefreshToken"
+          :usage-by-account-id="usageBatchByAccountId"
+          :usage-errors="usageBatchErrorByAccountId"
+          :usage-loading="usageBatchLoadingByAccountId"
+          :toggling-id="togglingSchedulable"
+          :request-batched-usage="isDesktopViewport ? queueBatchedUsage : null"
+          @toggle-select="toggleSel"
+          @toggle-schedulable="handleToggleSchedulable"
+          @show-temp-unsched="handleShowTempUnsched"
+          @account-updated="handleAccountUpdated"
+          @delete="handleDelete"
+          @edit="handleEdit"
+          @menu="openMenu"
+        />
         <DataTable
+          v-else
           ref="dataTableRef"
           :columns="cols"
           :data="accounts"
@@ -507,6 +556,7 @@ import { CreateAccountModal, EditAccountModal, BulkEditAccountModal, SyncFromCrs
 import AccountTableActions from '@/components/admin/account/AccountTableActions.vue'
 import AccountTableFilters from '@/components/admin/account/AccountTableFilters.vue'
 import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActionsBar.vue'
+import AccountCardGrid from '@/components/admin/account/AccountCardGrid.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
@@ -642,6 +692,9 @@ const accountToolsDropdownStyle = computed(() => ({
   width: `${accountToolsDropdownPosition.width}px`
 }))
 const hiddenColumns = reactive<Set<string>>(new Set())
+type AccountViewMode = 'table' | 'cards'
+const ACCOUNT_VIEW_MODE_KEY = 'account-view-mode'
+const viewMode = ref<AccountViewMode>('table')
 const DEFAULT_HIDDEN_COLUMNS = ['today_stats', 'proxy', 'notes', 'scheduler_score', 'rate_multiplier']
 const HIDDEN_COLUMNS_KEY = 'account-hidden-columns'
 // One-time migration: hide scheduler score for existing admins too, because showing it opt-ins to heavy backend scoring.
@@ -868,7 +921,7 @@ const refreshTodayStatsBatch = async () => {
   // - today_stats column shows dedicated today's metrics.
   // - usage column also embeds today's stats for Key/Bedrock rows.
   // So we only skip fetching when BOTH columns are hidden.
-  if (hiddenColumns.has('today_stats') && hiddenColumns.has('usage')) {
+  if (viewMode.value !== 'cards' && hiddenColumns.has('today_stats') && hiddenColumns.has('usage')) {
     todayStatsLoading.value = false
     todayStatsError.value = null
     return
@@ -997,6 +1050,24 @@ const loadSavedAutoRefresh = () => {
   }
 }
 
+const loadSavedViewMode = () => {
+  try {
+    const saved = localStorage.getItem(ACCOUNT_VIEW_MODE_KEY)
+    if (saved === 'cards' || saved === 'table') viewMode.value = saved
+  } catch (error) {
+    console.error('Failed to load saved account view mode:', error)
+  }
+}
+
+const setViewMode = (mode: AccountViewMode) => {
+  viewMode.value = mode
+  try {
+    localStorage.setItem(ACCOUNT_VIEW_MODE_KEY, mode)
+  } catch (error) {
+    console.error('Failed to save account view mode:', error)
+  }
+}
+
 const saveAutoRefreshToStorage = () => {
   try {
     localStorage.setItem(
@@ -1014,6 +1085,7 @@ const saveAutoRefreshToStorage = () => {
 if (typeof window !== 'undefined') {
   loadSavedColumns()
   loadSavedAutoRefresh()
+  loadSavedViewMode()
 }
 
 const setAutoRefreshEnabled = (enabled: boolean) => {
@@ -1352,6 +1424,14 @@ watch(accounts, (rows) => {
   usageBatchRequestTokenByAccountId.value = Object.fromEntries(
     Object.entries(usageBatchRequestTokenByAccountId.value).filter(([key]) => visibleIDs.has(key))
   )
+})
+
+watch(viewMode, (mode) => {
+  if (mode === 'cards') {
+    refreshTodayStatsBatch().catch((error) => {
+      console.error('Failed to refresh account today stats for card view:', error)
+    })
+  }
 })
 
 const isAnyModalOpen = computed(() => {
