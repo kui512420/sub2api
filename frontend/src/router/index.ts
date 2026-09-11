@@ -229,6 +229,12 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/creative',
+    name: 'CreativeCenter',
+    component: () => import('@/views/user/CreativeCenterView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: false, title: 'Creative Center' }
+  },
+  {
     path: '/usage',
     name: 'Usage',
     component: () => import('@/views/user/UsageView.vue'),
