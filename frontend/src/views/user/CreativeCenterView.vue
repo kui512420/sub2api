@@ -267,8 +267,7 @@ function openImageWorkspace() {
 <template>
   <AppLayout>
     <div class="creative-center-page mx-auto max-w-[1600px]">
-      <div class="creative-center-shell">
-        <main class="creative-center-content">
+      <main class="creative-center-content">
           <section v-if="activeSection === 'image'" class="creative-content-section">
             <CreativeSplitWorkspace
               :eyebrow="t('creativeCenter.sections.image.eyebrow')"
@@ -464,17 +463,12 @@ function openImageWorkspace() {
               </li>
             </ul>
           </section>
-        </main>
-      </div>
+      </main>
     </div>
   </AppLayout>
 </template>
 
 <style scoped>
-.creative-center-shell {
-  @apply flex min-h-[680px] flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-dark-700 dark:bg-dark-800;
-}
-
 .creative-center-content {
   @apply flex min-h-0 min-w-0 flex-1 w-full bg-gray-50/50 dark:bg-dark-950/20;
 }
