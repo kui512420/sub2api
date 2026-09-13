@@ -464,6 +464,71 @@ export function buildPlanTypeOptions(current: string, clearLabel: string): PlanT
 }
 
 /**
+ * 椒图（Jiaotu）号池条目→账号 credentials。
+ *
+ * 后端凭据键规范见 `backend/internal/service/jiaotu_account.go`：
+ *   token / phone / user_id / jiaotu_id / nick_name / points / jiaotu_status。
+ * token 属敏感项：admin 列表下发时被 RedactCredentials 剔掉，
+ * 所以读取一律走 credentials_status.has_token（存在性）而非原文。
+ */
+export const JIAOTU_PLATFORM = 'jiaotu'
+
+export interface JiaotuCredentialInput {
+  token: string
+  phone?: string
+  poolId?: string
+  nickName?: string
+  userId?: string
+  points?: string | number
+}
+
+/** 椒图账号凭据构造：只写非空项；points 转数字；token 不 trim 以外的加工。 */
+export function buildJiaotuCredentials(input: JiaotuCredentialInput): Record<string, unknown> {
+  const credentials: Record<string, unknown> = {}
+  const token = (input.token || '').trim()
+  if (token) credentials.token = token
+  const phone = (input.phone || '').trim()
+  if (phone) credentials.phone = phone
+  const poolId = (input.poolId || '').trim()
+  if (poolId) credentials.jiaotu_id = poolId
+  const nickName = (input.nickName || '').trim()
+  if (nickName) credentials.nick_name = nickName
+  const userId = (input.userId || '').trim()
+  if (userId) credentials.user_id = userId
+  const rawPoints = input.points === '' || input.points === null || input.points === undefined
+    ? NaN
+    : Number(input.points)
+  if (Number.isFinite(rawPoints) && rawPoints >= 0) {
+    credentials.points = Math.trunc(rawPoints)
+  }
+  return credentials
+}
+
+/** 从 admin 下发的 credentials / credentials_status 里读椒图展示字段（不含 token 原文）。 */
+export function readJiaotuAccountView(
+  credentials?: Record<string, unknown> | null,
+  credentialsStatus?: Record<string, boolean> | null
+): { phone: string; poolId: string; nickName: string; points: number | null; status: string; hasToken: boolean } {
+  const creds = credentials || {}
+  const asText = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
+  const pointsRaw = creds.points
+  const points =
+    typeof pointsRaw === 'number' && Number.isFinite(pointsRaw)
+      ? pointsRaw
+      : typeof pointsRaw === 'string' && pointsRaw.trim() !== '' && Number.isFinite(Number(pointsRaw))
+        ? Number(pointsRaw)
+        : null
+  return {
+    phone: asText(creds.phone),
+    poolId: asText(creds.jiaotu_id),
+    nickName: asText(creds.nick_name),
+    points,
+    status: asText(creds.jiaotu_status).toLowerCase(),
+    hasToken: Boolean(credentialsStatus?.has_token || asText(creds.token))
+  }
+}
+
+/**
  * 把手动选择的 plan_type 写入凭据：非空则设置，空则删除该键（清空/自动识别）。
  * 直接修改传入对象并返回。
  */

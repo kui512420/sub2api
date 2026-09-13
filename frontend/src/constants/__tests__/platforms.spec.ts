@@ -10,7 +10,9 @@ const concretePlatforms = [
   'kimi',
   'zhipu',
   'deepseek',
-  'minimax'
+  'minimax',
+  // 椒图：原生图片/视频上游（imageChat SSE + 积分号池），入站沿用 OpenAI Images / /v1/videos
+  'jiaotu'
 ]
 
 describe('platform option catalogs', () => {

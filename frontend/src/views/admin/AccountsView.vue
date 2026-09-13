@@ -125,6 +125,12 @@
                         </span>
                         <span class="flex-1 text-left">{{ t('admin.accounts.dataImport') }}</span>
                       </button>
+                      <button class="account-tools-menu-item" @click="openJiaotuPoolImport">
+                        <span class="account-tools-menu-icon bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
+                          <Icon name="sparkles" size="sm" />
+                        </span>
+                        <span class="flex-1 text-left">{{ t('admin.accounts.jiaotu.poolImport.title') }}</span>
+                      </button>
                       <button class="account-tools-menu-item" @click="openExportDataDialogFromMenu">
                         <span class="account-tools-menu-icon bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-300">
                           <Icon name="download" size="sm" />
@@ -508,6 +514,12 @@
     <AccountActionMenu :show="menu.show" :account="menu.acc" :anchor-rect="menu.anchorRect" @close="menu.show = false" @test="handleTest" @stats="handleViewStats" @schedule="handleSchedule" @duplicate="handleDuplicateAccount" @reauth="handleReAuth" @refresh-token="handleRefresh" @recover-state="handleRecoverState" @reset-quota="handleResetQuota" @set-privacy="handleSetPrivacy" @create-spark-shadow="handleCreateSparkShadow" />
     <SyncFromCrsModal :show="showSync" @close="showSync = false" @synced="reload" />
     <ImportDataModal :show="showImportData" @close="showImportData = false" @imported="handleDataImported" />
+    <JiaotuPoolImportModal
+      :show="showJiaotuPool"
+      :groups="groups"
+      @close="showJiaotuPool = false"
+      @imported="handleJiaotuPoolChanged"
+    />
     <BulkEditAccountModal
       :show="showBulkEdit"
       :account-ids="selIds"
@@ -559,6 +571,7 @@ import AccountBulkActionsBar from '@/components/admin/account/AccountBulkActions
 import AccountCardGrid from '@/components/admin/account/AccountCardGrid.vue'
 import AccountActionMenu from '@/components/admin/account/AccountActionMenu.vue'
 import ImportDataModal from '@/components/admin/account/ImportDataModal.vue'
+import JiaotuPoolImportModal from '@/components/admin/account/JiaotuPoolImportModal.vue'
 import ReAuthAccountModal from '@/components/admin/account/ReAuthAccountModal.vue'
 import AccountTestModal from '@/components/admin/account/AccountTestModal.vue'
 import AccountStatsModal from '@/components/admin/account/AccountStatsModal.vue'
@@ -641,6 +654,7 @@ const showCreate = ref(false)
 const showEdit = ref(false)
 const showSync = ref(false)
 const showImportData = ref(false)
+const showJiaotuPool = ref(false)
 const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
@@ -1440,6 +1454,7 @@ const isAnyModalOpen = computed(() => {
     showEdit.value ||
     showSync.value ||
     showImportData.value ||
+    showJiaotuPool.value ||
     showExportDataDialog.value ||
     showBulkEdit.value ||
     showTempUnsched.value ||
@@ -1603,6 +1618,16 @@ const openSyncFromCrs = () => {
 const openImportData = () => {
   closeAccountToolsDropdown()
   showImportData.value = true
+}
+
+const openJiaotuPoolImport = () => {
+  closeAccountToolsDropdown()
+  showJiaotuPool.value = true
+}
+
+// 导入/维护都会改写 credentials 里的积分与状态，直接重拉列表即可。
+const handleJiaotuPoolChanged = () => {
+  reload()
 }
 
 const openExportDataDialogFromMenu = () => {

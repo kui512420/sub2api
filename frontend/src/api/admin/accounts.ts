@@ -756,6 +756,105 @@ export async function importData(payload: {
   return data
 }
 
+// ========== 椒图（Jiaotu）号池导入 / 维护 ==========
+
+export interface JiaotuPoolImportPayload {
+  content: string
+  name_prefix?: string
+  notes?: string
+  group_ids?: number[]
+  proxy_id?: number | null
+  concurrency?: number
+  priority?: number
+  rate_multiplier?: number
+  load_factor?: number
+  credential_extras?: Record<string, unknown>
+  update_existing?: boolean
+  skip_default_group_bind?: boolean
+  confirm_mixed_channel_risk?: boolean
+}
+
+export interface JiaotuPoolImportItem {
+  index: number
+  name?: string
+  action: 'created' | 'updated' | 'skipped' | 'failed' | string
+  account_id?: number
+  points?: number
+  status?: string
+  message?: string
+}
+
+export interface JiaotuPoolImportMessage {
+  index: number
+  name?: string
+  message: string
+}
+
+export interface JiaotuPoolImportResult {
+  total: number
+  created: number
+  updated: number
+  skipped: number
+  failed: number
+  ready: number
+  unusable: number
+  target_size?: number
+  items?: JiaotuPoolImportItem[]
+  errors?: JiaotuPoolImportMessage[]
+  warnings?: JiaotuPoolImportMessage[]
+}
+
+export interface JiaotuPoolMaintenancePayload {
+  refresh_points?: boolean
+  sign_in?: boolean
+  concurrency?: number
+  limit?: number
+}
+
+export interface JiaotuPoolMaintenanceResult {
+  total: number
+  refreshed: number
+  unchanged: number
+  failed: number
+  expired: number
+  sign_in?: { attempted: number; success: number; already: number; failed: number }
+  items?: Array<{
+    account_id: number
+    name?: string
+    points: number
+    status: string
+    updated: boolean
+    message?: string
+  }>
+}
+
+/**
+ * 批量导入椒图号池（粘贴 kuikui 的 .jiaotu-pool.json / 同构 JSON / 裸 token 行）。
+ * 幂等：后端按「号池 ID + token」双键去重。
+ */
+export async function importJiaotuPool(
+  payload: JiaotuPoolImportPayload
+): Promise<JiaotuPoolImportResult> {
+  const { data } = await apiClient.post<JiaotuPoolImportResult>(
+    '/admin/accounts/import/jiaotu-pool',
+    payload,
+    { timeout: 180000 }
+  )
+  return data
+}
+
+/** 全池维护：刷新积分（默认）+ 可选每日签到；两个端点均不消耗积分。 */
+export async function jiaotuPoolMaintenance(
+  payload: JiaotuPoolMaintenancePayload
+): Promise<JiaotuPoolMaintenanceResult> {
+  const { data } = await apiClient.post<JiaotuPoolMaintenanceResult>(
+    '/admin/accounts/jiaotu/maintenance',
+    payload,
+    { timeout: 300000 }
+  )
+  return data
+}
+
 export async function importCodexSession(payload: CodexSessionImportRequest): Promise<CodexSessionImportResult> {
   const { data } = await apiClient.post<CodexSessionImportResult>('/admin/accounts/import/codex-session', payload, {
     timeout: 120000 // 120s timeout for large session imports
@@ -1107,6 +1206,8 @@ export const accountsAPI = {
   syncFromCrs,
   exportData,
   importData,
+  importJiaotuPool,
+  jiaotuPoolMaintenance,
   importCodexSession,
   createOpenAICodexPAT,
   getAntigravityDefaultModelMapping,

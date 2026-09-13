@@ -653,3 +653,67 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
   })
 })
+
+describe('CreateAccountModal 椒图（Jiaotu）账号', () => {
+  beforeEach(() => {
+    authIsSimpleMode.value = true
+    createAccountMock.mockReset().mockResolvedValue({ id: 43, platform: 'jiaotu', type: 'apikey' })
+    probeUpstreamBillingMock.mockReset().mockResolvedValue({})
+    syncUpstreamModelsMock.mockReset().mockResolvedValue({ models: [], metadata: {} })
+    showWarningMock.mockReset()
+  })
+
+  async function mountJiaotu() {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'admin.accounts.jiaotu.platformLabel')
+    // 选完平台就切到椒图专属凭据表单（不再暴露 base_url / api_key 输入框）
+    expect(wrapper.find('[data-testid="jiaotu-token"]').exists()).toBe(true)
+    expect(wrapper.find('form#create-account-form input[type="password"]').exists()).toBe(false)
+    return wrapper
+  }
+
+  it('凭据只带 token 与可选展示字段，不写 base_url / api_key', async () => {
+    const wrapper = await mountJiaotu()
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('椒图手填号')
+    await wrapper.get('[data-testid="jiaotu-token"]').setValue('  eyJhbGciOi.abc.def  ')
+    await wrapper.get('[data-testid="jiaotu-phone"]').setValue('13800001234')
+    await wrapper.get('[data-testid="jiaotu-pool-id"]').setValue('jp-9')
+    await wrapper.get('[data-testid="jiaotu-points"]').setValue('68')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload.platform).toBe('jiaotu')
+    expect(payload.type).toBe('apikey')
+    expect(payload.concurrency).toBe(1)
+    expect(payload.credentials).toEqual({
+      token: 'eyJhbGciOi.abc.def',
+      phone: '13800001234',
+      jiaotu_id: 'jp-9',
+      points: 68
+    })
+  })
+
+  it('token 缺失时在前端拦下，不发请求', async () => {
+    const wrapper = await mountJiaotu()
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('缺 token')
+    await wrapper.get('[data-testid="jiaotu-phone"]').setValue('13800001234')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).not.toHaveBeenCalled()
+  })
+
+  it('只填 token 时不产生空的可选凭据键', async () => {
+    const wrapper = await mountJiaotu()
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('仅 token')
+    await wrapper.get('[data-testid="jiaotu-token"]').setValue('tok-only')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(Object.keys(payload.credentials)).toEqual(['token'])
+    expect(payload.extra ?? {}).not.toHaveProperty('credentials')
+  })
+})

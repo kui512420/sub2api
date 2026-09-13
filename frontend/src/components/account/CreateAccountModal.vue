@@ -161,7 +161,7 @@
             Grok
           </button>
         </div>
-        <!-- CN providers row: Kimi / Zhipu GLM / DeepSeek -->
+        <!-- CN providers row: Kimi / Zhipu GLM / DeepSeek / MiniMax / 椒图 -->
         <div class="mt-2 flex flex-wrap rounded-lg bg-gray-100 p-1 dark:bg-dark-700">
           <button
             type="button"
@@ -214,6 +214,20 @@
           >
             <PlatformIcon platform="minimax" size="sm" />
             MiniMax
+          </button>
+          <button
+            type="button"
+            data-testid="platform-jiaotu"
+            @click="selectJiaotuPlatform()"
+            :class="[
+              'flex flex-1 items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition-all',
+              form.platform === 'jiaotu'
+                ? 'bg-white text-amber-600 shadow-sm dark:bg-dark-600 dark:text-amber-400'
+                : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
+            ]"
+          >
+            <Icon name="sparkles" size="sm" />
+            {{ t('admin.accounts.jiaotu.platformLabel') }}
           </button>
         </div>
       </div>
@@ -1291,8 +1305,71 @@
         </div>
       </div>
 
+      <!-- 椒图账号凭据：token 为上游登录态（无 refresh），手机/号池 ID 仅用于定位与展示 -->
+      <div v-if="isJiaotuPlatform" class="space-y-4">
+        <div>
+          <label class="input-label">{{ t('admin.accounts.jiaotu.tokenLabel') }}</label>
+          <textarea
+            v-model="jiaotuToken"
+            rows="3"
+            required
+            class="input font-mono"
+            data-testid="jiaotu-token"
+            :placeholder="t('admin.accounts.jiaotu.tokenPlaceholder')"
+          ></textarea>
+          <p class="input-hint">{{ t('admin.accounts.jiaotu.tokenHint') }}</p>
+        </div>
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label class="input-label">{{ t('admin.accounts.jiaotu.phoneLabel') }}</label>
+            <input
+              v-model="jiaotuPhone"
+              type="text"
+              class="input font-mono"
+              data-testid="jiaotu-phone"
+              :placeholder="t('admin.accounts.jiaotu.phonePlaceholder')"
+            />
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.jiaotu.poolIdLabel') }}</label>
+            <input
+              v-model="jiaotuPoolId"
+              type="text"
+              class="input font-mono"
+              data-testid="jiaotu-pool-id"
+              :placeholder="t('admin.accounts.jiaotu.poolIdPlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.jiaotu.poolIdHint') }}</p>
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.jiaotu.nickNameLabel') }}</label>
+            <input v-model="jiaotuNickName" type="text" class="input" data-testid="jiaotu-nickname" />
+          </div>
+          <div>
+            <label class="input-label">{{ t('admin.accounts.jiaotu.pointsLabel') }}</label>
+            <input
+              v-model="jiaotuPoints"
+              type="number"
+              min="0"
+              class="input"
+              data-testid="jiaotu-points"
+              :placeholder="t('admin.accounts.jiaotu.pointsPlaceholder')"
+            />
+            <p class="input-hint">{{ t('admin.accounts.jiaotu.pointsHint') }}</p>
+          </div>
+        </div>
+        <div
+          class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-400"
+        >
+          {{ t('admin.accounts.jiaotu.singleAccountConcurrencyHint') }}
+        </div>
+      </div>
+
       <!-- API Key input (only for apikey type, excluding Antigravity which has its own fields) -->
-      <div v-if="form.type === 'apikey' && form.platform !== 'antigravity'" class="space-y-4">
+      <div
+        v-if="form.type === 'apikey' && form.platform !== 'antigravity' && !isJiaotuPlatform"
+        class="space-y-4"
+      >
         <div v-if="!isCNPlatform || apiProtocol !== 'adaptive'">
           <label class="input-label">{{ t('admin.accounts.baseUrl') }}</label>
           <input
@@ -3876,7 +3953,9 @@ import {
   defaultCNAdaptiveBaseUrls,
   defaultCNBaseUrl,
   isCNProviderPlatform,
+  buildJiaotuCredentials,
   isHeaderOverrideCapable,
+  JIAOTU_PLATFORM,
   validateHeaderOverrideRows,
   type CnAccountMode,
   type CnApiProtocol,
@@ -4065,6 +4144,14 @@ interface TempUnschedRuleForm {
   description: string
 }
 
+// 椒图（Jiaotu）号池账号：token 是上游登录态，手机号/号池 ID/积分为可选展示字段。
+const jiaotuToken = ref('')
+const jiaotuPhone = ref('')
+const jiaotuPoolId = ref('')
+const jiaotuNickName = ref('')
+const jiaotuPoints = ref('')
+const isJiaotuPlatform = computed(() => form.platform === 'jiaotu')
+
 // State
 const step = ref(1)
 const submitting = ref(false)
@@ -4151,6 +4238,8 @@ const cnAccentIconClass = computed(() => {
 })
 // 切换国产供应商平台：强制 apikey 类型，deepseek 无 coding 套餐故锁定 payg，
 // 协议回落 adaptive，并把 base url 重置为该平台默认端点。
+// 切换国产供应商平台：强制 apikey 类型，deepseek 无 coding 套餐故锁定 payg，
+// 协议回落 adaptive，并把 base url 重置为该平台默认端点。
 function selectCNPlatform(platform: CnProviderPlatform) {
   form.platform = platform
   form.type = 'apikey'
@@ -4161,6 +4250,16 @@ function selectCNPlatform(platform: CnProviderPlatform) {
   }
   apiKeyBaseUrl.value = defaultCNBaseUrl(platform, accountMode.value, apiProtocol.value)
   resetAdaptiveBaseUrls(platform, accountMode.value)
+}
+// 椒图是积分号池型上游（图片/视频走原生 imageChat），不送 base_url/api_key，
+// 凭据只有 token + 可选手机号/号池 ID/昵称/积分，因此单独走一个选择器。
+function selectJiaotuPlatform() {
+  form.platform = JIAOTU_PLATFORM
+  form.type = 'apikey'
+  accountCategory.value = 'apikey'
+  // 单号并发默认 1：椒图按号计积分，并发打高容易触发风控（契约 R5）
+  if (!form.concurrency || form.concurrency > 4) form.concurrency = 1
+  apiKeyBaseUrl.value = 'https://api.jiaotuai.cn'
 }
 // 账号类型 / 协议变更时同步默认 base url。
 watch(accountMode, (mode, previousMode) => {
@@ -5177,6 +5276,11 @@ const resetForm = () => {
   form.group_ids = []
   form.expires_at = null
   accountCategory.value = 'oauth-based'
+  jiaotuToken.value = ''
+  jiaotuPhone.value = ''
+  jiaotuPoolId.value = ''
+  jiaotuNickName.value = ''
+  jiaotuPoints.value = ''
   addMethod.value = 'oauth'
   accountMode.value = 'payg'
   apiProtocol.value = 'adaptive'
@@ -5623,6 +5727,28 @@ const handleSubmit = async () => {
       tier_id: 'vertex'
     }
     await createAccountAndFinish(form.platform, 'service_account' as AccountType, credentials)
+    return
+  }
+
+  // 椒图：凭据只有 token（+ 手机号/号池 ID/昵称/积分），不能走下面的
+  // base_url + api_key 通用结构（后端 JiaotuToken() 只读 credentials.token）。
+  if (form.platform === JIAOTU_PLATFORM) {
+    if (!form.name.trim()) {
+      appStore.showError(t('admin.accounts.pleaseEnterAccountName'))
+      return
+    }
+    const jiaotuCredentials = buildJiaotuCredentials({
+      token: jiaotuToken.value,
+      phone: jiaotuPhone.value,
+      poolId: jiaotuPoolId.value,
+      nickName: jiaotuNickName.value,
+      points: jiaotuPoints.value
+    })
+    if (!jiaotuCredentials.token) {
+      appStore.showError(t('admin.accounts.jiaotu.tokenRequired'))
+      return
+    }
+    await createAccountAndFinish(JIAOTU_PLATFORM, 'apikey' as AccountType, jiaotuCredentials)
     return
   }
 
