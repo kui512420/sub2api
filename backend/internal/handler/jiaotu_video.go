@@ -173,7 +173,10 @@ func (h *AsyncImageHandler) runJiaotuVideo(tasks *service.JiaotuVideoTaskService
 func (h *AsyncImageHandler) completeJiaotuVideoTask(taskID string, apiKey *service.APIKey, account *service.Account,
 	req *service.JiaotuVideoRequest, result *service.JiaotuVideoResult,
 	subscription *service.UserSubscription, tasks *service.JiaotuVideoTaskService) {
-	if err := tasks.Complete(context.Background(), taskID, result, req.Model.StableID); err != nil {
+	// 标记 completed 前先尝试把视频转存到对象存储（R2/S3）：成功后 result.URL 被替换为
+	// 持久地址、archived=true；未配置对象存储或转存失败则保留上游临时链接兜底，不阻断交付。
+	archived := h.persistJiaotuVideoToStorage(taskID, result)
+	if err := tasks.Complete(context.Background(), taskID, result, req.Model.StableID, archived); err != nil {
 		logger.L().Error("jiaotu.video_task.complete_failed", zap.String("task_id", taskID), zap.Error(err))
 		return
 	}
@@ -190,6 +193,33 @@ func (h *AsyncImageHandler) completeJiaotuVideoTask(taskID string, apiKey *servi
 		logger.L().Warn("jiaotu.video_task.billing_failed",
 			zap.String("task_id", taskID), zap.Int64("account_id", account.ID), zap.Error(err))
 	}
+}
+
+// persistJiaotuVideoToStorage 把上游生成好的视频下载并转存到已配置的对象存储。
+// 成功时就地把 result.URL 替换为对象存储地址并返回 true；未启用对象存储、缺少结果
+// 或转存失败时返回 false（调用方据此以上游临时链接收尾，保证视频始终可交付）。
+func (h *AsyncImageHandler) persistJiaotuVideoToStorage(taskID string, result *service.JiaotuVideoResult) bool {
+	if result == nil || strings.TrimSpace(result.URL) == "" || h.tasks == nil {
+		return false
+	}
+	storage, ok := h.tasks.Storage()
+	if !ok {
+		return false
+	}
+	archiver := service.NewJiaotuVideoArchiver(storage)
+	if !archiver.Available() {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), service.JiaotuVideoArchiveTimeout)
+	defer cancel()
+	storedURL, err := archiver.Archive(ctx, taskID, result.URL)
+	if err != nil {
+		logger.L().Warn("jiaotu.video_task.archive_failed", zap.String("task_id", taskID), zap.Error(err))
+		return false
+	}
+	logger.L().Info("jiaotu.video_task.archived", zap.String("task_id", taskID))
+	result.URL = storedURL
+	return true
 }
 
 // JiaotuVideoList GET /v1/videos。列出当前 API Key 名下的视频任务（创作记录页数据源）。
@@ -261,6 +291,9 @@ func (h *AsyncImageHandler) JiaotuVideoStatus(c *gin.Context) {
 		response["resolution"] = task.Resolution
 		response["has_audio"] = task.HasAudio
 		response["reference_count"] = task.Reference
+		if task.Archived {
+			response["archived"] = true
+		}
 	}
 	if len(task.Error) > 0 {
 		response["error"] = json.RawMessage(task.Error)
@@ -290,6 +323,13 @@ func (h *AsyncImageHandler) JiaotuVideoContent(c *gin.Context) {
 	}
 	if task.Status != "completed" || strings.TrimSpace(task.URL) == "" {
 		imageTaskJSONError(c, http.StatusConflict, "invalid_request_error", "video is not ready for download")
+		return
+	}
+	// 已转存对象存储的视频：直接 307 跳转到签名直链，让客户端直连 R2/S3，
+	// 避免大视频字节流经网关内存（也绕开代拉上游的结果体积上限）。
+	if task.Archived {
+		c.Header("Cache-Control", "no-store")
+		c.Redirect(http.StatusTemporaryRedirect, task.URL)
 		return
 	}
 	data, contentType, err := h.openAI.gatewayService.FetchJiaotuVideoBytes(c.Request.Context(), task.URL)

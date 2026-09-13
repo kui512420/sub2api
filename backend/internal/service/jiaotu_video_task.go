@@ -61,6 +61,9 @@ type JiaotuVideoTask struct {
 	Resolution string          `json:"resolution,omitempty"`
 	HasAudio   bool            `json:"has_audio,omitempty"`
 	Reference  int             `json:"reference_count,omitempty"`
+	// Archived 为 true 时 URL 已转存到对象存储（R2/S3），是持久地址；
+	// false 时 URL 指向上游临时链接，仅在其有效期内可访问。
+	Archived   bool            `json:"archived,omitempty"`
 	CreatedAt  int64           `json:"created_at"`
 	ExpiresAt  int64           `json:"expires_at"`
 	Error      json.RawMessage `json:"error,omitempty"`
@@ -99,7 +102,7 @@ func (s *JiaotuVideoTaskService) Create(ctx context.Context, owner JiaotuVideoTa
 		CreatedAt: now.Unix(),
 		ExpiresAt: now.Add(s.ttl).Unix(),
 	}
-	record.Result = mustJiaotuVideoEnvelope(model, nil, jiaotuVideoStatusProcessing)
+	record.Result = mustJiaotuVideoEnvelope(model, nil, jiaotuVideoStatusProcessing, false)
 	if err := s.store.Save(ctx, record, s.ttl); err != nil {
 		return nil, ErrJiaotuVideoTaskUnavail.WithCause(err)
 	}
@@ -166,8 +169,9 @@ func (s *JiaotuVideoTaskService) List(ctx context.Context, owner JiaotuVideoTask
 	return tasks, nil
 }
 
-// Complete 写入成功结果（含可下载地址）。载荷非法时按失败收尾，避免存坏数据。
-func (s *JiaotuVideoTaskService) Complete(ctx context.Context, id string, result *JiaotuVideoResult, model string) error {
+// Complete 写入成功结果（含可下载地址）。archived 表示 result.URL 是否已转存到
+// 对象存储（持久地址）；为 false 时是上游临时链接。载荷非法时按失败收尾，避免存坏数据。
+func (s *JiaotuVideoTaskService) Complete(ctx context.Context, id string, result *JiaotuVideoResult, model string, archived bool) error {
 	if !s.Available() {
 		return ErrJiaotuVideoTaskUnavail
 	}
@@ -177,7 +181,7 @@ func (s *JiaotuVideoTaskService) Complete(ctx context.Context, id string, result
 	if len(result.URL) > jiaotuVideoTaskMaxURLBytes {
 		return s.failRaw(ctx, id, http.StatusBadGateway, imageTaskErrorJSON("api_error", "video result URL is too long"))
 	}
-	payload := mustJiaotuVideoEnvelope(model, result, jiaotuVideoStatusCompleted)
+	payload := mustJiaotuVideoEnvelope(model, result, jiaotuVideoStatusCompleted, archived)
 	return s.finish(ctx, id, ImageTaskStatusCompleted, http.StatusOK, payload, nil)
 }
 
@@ -199,7 +203,7 @@ func (s *JiaotuVideoTaskService) failRaw(ctx context.Context, id string, statusC
 	if len(taskErr) > jiaotuVideoTaskMaxErrorBytes {
 		taskErr = taskErr[:jiaotuVideoTaskMaxErrorBytes]
 	}
-	return s.finish(ctx, id, ImageTaskStatusFailed, statusCode, mustJiaotuVideoEnvelope("", nil, jiaotuVideoStatusFailed), taskErr)
+	return s.finish(ctx, id, ImageTaskStatusFailed, statusCode, mustJiaotuVideoEnvelope("", nil, jiaotuVideoStatusFailed, false), taskErr)
 }
 
 func (s *JiaotuVideoTaskService) finish(ctx context.Context, id string, status string, statusCode int, result, taskErr json.RawMessage) error {
@@ -228,7 +232,8 @@ func (s *JiaotuVideoTaskService) finish(ctx context.Context, id string, status s
 }
 
 // mustJiaotuVideoEnvelope 生成任务载荷（永远合法 JSON，长度受限）。
-func mustJiaotuVideoEnvelope(model string, result *JiaotuVideoResult, status string) json.RawMessage {
+// archived 仅在 completed 且 URL 已转存对象存储时为真，会写入 "archived":true。
+func mustJiaotuVideoEnvelope(model string, result *JiaotuVideoResult, status string, archived bool) json.RawMessage {
 	payload := map[string]any{"status": status, "object": "video"}
 	if trimmed := strings.TrimSpace(model); trimmed != "" {
 		payload["model"] = trimmed
@@ -240,6 +245,9 @@ func mustJiaotuVideoEnvelope(model string, result *JiaotuVideoResult, status str
 		payload["resolution"] = result.Quality
 		payload["has_audio"] = result.Audio
 		payload["reference_count"] = result.ReferenceCount
+		if archived {
+			payload["archived"] = true
+		}
 		if result.TaskID != "" {
 			payload["upstream_task_id"] = result.TaskID
 		}
@@ -268,6 +276,7 @@ func jiaotuVideoTaskFromRecord(record *ImageTaskRecord) *JiaotuVideoTask {
 		Resolution    string `json:"resolution"`
 		HasAudio      bool   `json:"has_audio"`
 		ReferenceList int    `json:"reference_count"`
+		Archived      bool   `json:"archived"`
 	}
 	if len(record.Result) > 0 {
 		_ = json.Unmarshal(record.Result, &payload)
@@ -279,6 +288,7 @@ func jiaotuVideoTaskFromRecord(record *ImageTaskRecord) *JiaotuVideoTask {
 	task.Resolution = payload.Resolution
 	task.HasAudio = payload.HasAudio
 	task.Reference = payload.ReferenceList
+	task.Archived = payload.Archived
 	return task
 }
 

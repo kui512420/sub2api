@@ -57,6 +57,15 @@ func defaultImageDownloadHTTPClient() *http.Client {
 	return &http.Client{Timeout: 60 * time.Second}
 }
 
+// Storage 暴露底层对象存储客户端，供非图片产物（如椒图视频 mp4）复用同一套
+// 凭证与桶配置，而不必走图片响应（data[].url）的 Rewrite 语义。可能为 nil。
+func (u *ImageResultUploader) Storage() ImageStorage {
+	if u == nil {
+		return nil
+	}
+	return u.storage
+}
+
 // Rewrite 将 result（上游生图响应 JSON）里的每张图片转存到对象存储，
 // 返回改写后的紧凑结果（data[i].url 指向对象存储，b64_json 被移除）。
 // 任一图片转存失败即返回 error（调用方据此将任务标记为失败，绝不把大 blob 落 Redis）。

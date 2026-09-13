@@ -155,6 +155,24 @@ func (s *ImageTaskService) Store() ImageTaskStore {
 	return s.store
 }
 
+// Storage 返回当前生效的对象存储客户端（后台配置可热切换，因此每次实时解析）。
+// 第二个返回值表示对象存储是否已启用且凭证齐全：未启用时视频等产物应回退到
+// 上游临时 URL，而不是报错。供椒图视频转存复用同一套 R2/S3 配置。
+func (s *ImageTaskService) Storage() (ImageStorage, bool) {
+	if s == nil {
+		return nil, false
+	}
+	uploader, enabled := s.current()
+	if !enabled || uploader == nil {
+		return nil, false
+	}
+	storage := uploader.Storage()
+	if storage == nil {
+		return nil, false
+	}
+	return storage, true
+}
+
 func (s *ImageTaskService) ExecutionTimeout() time.Duration {
 	if s == nil || s.executionTimeout <= 0 {
 		return defaultImageTaskExecutionTimeout

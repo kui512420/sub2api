@@ -62,7 +62,10 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	if apiKey.Group != nil {
 		platform = apiKey.Group.Platform
 	}
-	if platform != service.PlatformOpenAI && platform != service.PlatformGrok {
+	// 椒图（jiaotu）入站同样保持 OpenAI Images 协议、内部由 OpenAIGateway.Images
+	// 处理，因此异步任务（结果转存对象存储）对其同样开放；否则原生椒图分组只能走
+	// 同步透传，生成图片无法落 R2。
+	if platform != service.PlatformOpenAI && platform != service.PlatformGrok && platform != service.PlatformJiaotu {
 		imageTaskJSONError(c, http.StatusNotFound, "not_found_error", "Images API is not supported for this platform")
 		return
 	}
