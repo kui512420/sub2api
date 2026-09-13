@@ -155,5 +155,7 @@ output/
 
 # Vitest / Vite cache at repo root
 .vite/
+# Agent 后台任务输出目录（含原始会话/工具日志，可能有凭据回显），绝不入库
+.pi/
 # 本地闭源插件开发目录及构建产物不进入 Sub2API 仓库
 /plugins/

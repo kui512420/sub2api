@@ -684,6 +684,19 @@ websocat -H="Sec-WebSocket-Protocol: sub2api-admin, jwt.<ADMIN_TOKEN>" ws://loca
 
 #### 开发模式
 
+Windows 本地开发时，请把数据目录明确指向 `deploy/data`。如果从仓库根目录直接启动却没有设置 `DATA_DIR`，后端可能找不到已安装标记并误跳转到 `/setup`。
+
+```powershell
+# 在仓库根目录执行，使用 deploy/data 中的本地配置和数据库
+$env:DATA_DIR = (Resolve-Path .\deploy\data).Path
+$env:CONFIG_FILE = (Resolve-Path .\deploy\data\config.yaml).Path
+$env:DATABASE_HOST = '127.0.0.1'
+$env:REDIS_HOST = '127.0.0.1'
+$env:SERVER_HOST = '127.0.0.1'
+Set-Location .\backend
+go run ./cmd/server
+```
+
 ```bash
 # 后端（支持热重载）
 cd backend

@@ -706,6 +706,18 @@ Because step 5 above pre-creates `config.yaml`, the setup wizard will be **skipp
 
 #### Development Mode
 
+On Windows, point `DATA_DIR` at `deploy/data` when running the backend locally. Otherwise starting from the repository root can make the server miss the installed marker and redirect to `/setup`.
+
+```powershell
+$env:DATA_DIR = (Resolve-Path .\deploy\data).Path
+$env:CONFIG_FILE = (Resolve-Path .\deploy\data\config.yaml).Path
+$env:DATABASE_HOST = '127.0.0.1'
+$env:REDIS_HOST = '127.0.0.1'
+$env:SERVER_HOST = '127.0.0.1'
+Set-Location .\backend
+go run ./cmd/server
+```
+
 ```bash
 # Backend (with hot reload)
 cd backend
