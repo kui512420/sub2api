@@ -103,7 +103,67 @@ type Config struct {
 	Idempotency             IdempotencyConfig             `mapstructure:"idempotency"`
 	BatchImage              BatchImageConfig              `mapstructure:"batch_image"`
 	ImageStorage            ImageStorageConfig            `mapstructure:"image_storage"`
+	Jiaotu                  JiaotuConfig                  `mapstructure:"jiaotu"`
 	Plugins                 PluginConfig                  `mapstructure:"plugins"`
+}
+
+// JiaotuConfig 椒图（jiaotuai.cn）原生上游配置。
+// 一个 sub2api 账号 = 一个椒图号；图片/视频均走 imageChat SSE，详见 docs/JIAOTU_NATIVE_INTEGRATION.md。
+type JiaotuConfig struct {
+	APIBase               string                   `mapstructure:"api_base"`               // 默认 https://api.jiaotuai.cn
+	WebOrigin             string                   `mapstructure:"web_origin"`             // 指纹头 Origin/Referer，默认 https://jiaotu.top
+	TimeoutSeconds        int                      `mapstructure:"timeout_seconds"`        // 单次上游调用整体超时（图片/视频分钟级）
+	HeaderTimeoutSeconds  int                      `mapstructure:"header_timeout_seconds"` // 等响应头超时，快速发现死代理
+	ConnectTimeoutSeconds int                      `mapstructure:"connect_timeout_seconds"`
+	ModelsCacheTTLSeconds int                      `mapstructure:"models_cache_ttl_seconds"` // queryModels 缓存时长
+	SignInEnabled         bool                     `mapstructure:"sign_in_enabled"`          // 每日免费积分签到
+	MaxAttempts           int                      `mapstructure:"max_attempts"`             // 单请求最多换几个号（含首次）
+	AccountConcurrency    int                      `mapstructure:"account_concurrency"`      // 导入时的单号默认并发
+	MinPointsBuffer       int                      `mapstructure:"min_points_buffer"`        // 选号时额外预留的积分余量
+	AutoAnswerQuestions   bool                     `mapstructure:"auto_answer_questions"`    // 上游反问时用原始需求自动作答一轮（契约 R8）
+	MaxReferenceMB        int                      `mapstructure:"max_reference_mb"`         // 入站参考图上限（kuikui: 10MiB）
+	MaxResultMB           int                      `mapstructure:"max_result_mb"`            // 回图/回视频下载上限
+	AutoRegister          JiaotuAutoRegisterConfig `mapstructure:"auto_register"`
+}
+
+// JiaotuAutoRegisterConfig 自动补号（豪猪 OpenAPI / 旧版 my531 接码 + 短效代理）。
+// **默认关闭**：开启会真实花接码费并有风控风险，必须显式批准。
+type JiaotuAutoRegisterConfig struct {
+	Enabled            bool            `mapstructure:"enabled"`
+	PoolTarget         int             `mapstructure:"pool_target"`     // 0=不补号
+	ProxyAPI           string          `mapstructure:"proxy_api"`       // 返回 ip:port 的短效代理接口；空=直连注册
+	FallbackInvite     string          `mapstructure:"fallback_invite"` // 号池无 inviteOwn 时的兜底邀请码
+	MinIntervalSeconds int             `mapstructure:"min_interval_seconds"`
+	CooldownSeconds    int             `mapstructure:"cooldown_seconds"`
+	ProxyAttempts      int             `mapstructure:"proxy_attempts"`
+	SMS                JiaotuSMSConfig `mapstructure:"sms"`
+}
+
+// JiaotuSMSConfig 接码平台凭据（只允许本地 config/env，绝不入库）。
+type JiaotuSMSConfig struct {
+	Haozhu JiaotuHaozhuConfig `mapstructure:"haozhu"`
+	My531  JiaotuMy531Config  `mapstructure:"my531"`
+}
+
+type JiaotuHaozhuConfig struct {
+	API                 string `mapstructure:"api"`
+	User                string `mapstructure:"user"`
+	Pass                string `mapstructure:"pass"`
+	Token               string `mapstructure:"token"`
+	SID                 string `mapstructure:"sid"`
+	Author              string `mapstructure:"author"`
+	UID                 string `mapstructure:"uid"`
+	PollIntervalSeconds int    `mapstructure:"poll_interval_seconds"`
+	WaitTimeoutSeconds  int    `mapstructure:"wait_timeout_seconds"`
+}
+
+type JiaotuMy531Config struct {
+	API   string `mapstructure:"api"`
+	Token string `mapstructure:"token"`
+	User  string `mapstructure:"user"`
+	Pass  string `mapstructure:"pass"`
+	PID   string `mapstructure:"pid"`
+	Dev   string `mapstructure:"dev"`
 }
 
 // PluginConfig 控制管理员手动上传的本地进程插件。
@@ -2200,6 +2260,48 @@ func setDefaults() {
 	viper.SetDefault("batch_image.output_retention_max_days", 7)
 	viper.SetDefault("batch_image.cleanup_interval_minutes", 30)
 	viper.SetDefault("batch_image.cleanup_batch_size", 100)
+
+	// 椒图（jiaotuai.cn）原生上游：图片/视频走 imageChat SSE，号池按积分选号。
+	viper.SetDefault("jiaotu.api_base", "https://api.jiaotuai.cn")
+	viper.SetDefault("jiaotu.web_origin", "https://jiaotu.top")
+	viper.SetDefault("jiaotu.timeout_seconds", 600)
+	viper.SetDefault("jiaotu.header_timeout_seconds", 90)
+	viper.SetDefault("jiaotu.connect_timeout_seconds", 15)
+	viper.SetDefault("jiaotu.models_cache_ttl_seconds", 600)
+	viper.SetDefault("jiaotu.sign_in_enabled", false)
+	viper.SetDefault("jiaotu.max_attempts", 3)
+	viper.SetDefault("jiaotu.account_concurrency", 1)
+	viper.SetDefault("jiaotu.min_points_buffer", 0)
+	// 椒图 imageChat 现在会对「不明确」的提示词回 questions 而不回图；
+	// 默认自动作答一轮并续发同一会话，否则椒图分组几乎无法出图（契约 R8）。
+	viper.SetDefault("jiaotu.auto_answer_questions", true)
+	viper.SetDefault("jiaotu.max_reference_mb", 10)
+	viper.SetDefault("jiaotu.max_result_mb", 32)
+	// 自动补号默认关闭：开启会真实消耗接码费用并触发上游风控，必须显式批准。
+	viper.SetDefault("jiaotu.auto_register.enabled", false)
+	viper.SetDefault("jiaotu.auto_register.pool_target", 0)
+	viper.SetDefault("jiaotu.auto_register.min_interval_seconds", 4)
+	viper.SetDefault("jiaotu.auto_register.cooldown_seconds", 120)
+	viper.SetDefault("jiaotu.auto_register.proxy_attempts", 3)
+	// 凭据类字符串键必须显式注册空默认值，否则 env 覆盖会被静默忽略
+	// （internal/config/env_reachability_test.go 会直接失败）。
+	viper.SetDefault("jiaotu.auto_register.proxy_api", "")
+	viper.SetDefault("jiaotu.auto_register.fallback_invite", "")
+	viper.SetDefault("jiaotu.auto_register.sms.haozhu.user", "")
+	viper.SetDefault("jiaotu.auto_register.sms.haozhu.pass", "")
+	viper.SetDefault("jiaotu.auto_register.sms.haozhu.token", "")
+	viper.SetDefault("jiaotu.auto_register.sms.haozhu.sid", "")
+	viper.SetDefault("jiaotu.auto_register.sms.haozhu.author", "")
+	viper.SetDefault("jiaotu.auto_register.sms.haozhu.uid", "")
+	viper.SetDefault("jiaotu.auto_register.sms.my531.token", "")
+	viper.SetDefault("jiaotu.auto_register.sms.my531.user", "")
+	viper.SetDefault("jiaotu.auto_register.sms.my531.pass", "")
+	viper.SetDefault("jiaotu.auto_register.sms.haozhu.api", "https://api.haozhuma.com")
+	viper.SetDefault("jiaotu.auto_register.sms.haozhu.poll_interval_seconds", 5)
+	viper.SetDefault("jiaotu.auto_register.sms.haozhu.wait_timeout_seconds", 120)
+	viper.SetDefault("jiaotu.auto_register.sms.my531.api", "http://api.my531.com")
+	viper.SetDefault("jiaotu.auto_register.sms.my531.pid", "68420")
+	viper.SetDefault("jiaotu.auto_register.sms.my531.dev", "taxin888")
 	viper.SetDefault("batch_image.queue_enabled", false)
 	viper.SetDefault("batch_image.queue_ready_key", "batch_image:queue:ready")
 	viper.SetDefault("batch_image.queue_delayed_key", "batch_image:queue:delayed")

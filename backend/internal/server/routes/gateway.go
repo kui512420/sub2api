@@ -82,6 +82,9 @@ func RegisterGatewayRoutes(
 		switch getGroupPlatform(c) {
 		case service.PlatformOpenAI:
 			h.OpenAIGateway.Images(c)
+		case service.PlatformJiaotu:
+			// 椒图：入站保持 OpenAI Images 协议，上游为原生 imageChat。
+			h.OpenAIGateway.Images(c)
 		case service.PlatformGrok:
 			h.OpenAIGateway.GrokImages(c)
 		default:
@@ -95,6 +98,11 @@ func RegisterGatewayRoutes(
 		}
 	}
 	videoGenerationHandler := func(c *gin.Context) {
+		// 椒图分组：上游为同步 imageChat 视频流，用任务存储包成 OpenAI 异步契约。
+		if getGroupPlatform(c) == service.PlatformJiaotu {
+			h.AsyncImage.JiaotuVideoSubmit(c)
+			return
+		}
 		// Video status/content lookups below already allow Composite groups; keep
 		// task creation aligned so composite keys that route to Grok accounts can
 		// submit video generation jobs.
@@ -110,7 +118,25 @@ func RegisterGatewayRoutes(
 			},
 		})
 	}
+	videoListHandler := func(c *gin.Context) {
+		if getGroupPlatform(c) == service.PlatformJiaotu {
+			h.AsyncImage.JiaotuVideoList(c)
+			return
+		}
+		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{
+				"type":    "invalid_request_error",
+				"code":    "video_list_not_supported",
+				"message": "Video history listing is only available for Jiaotu video groups.",
+			},
+		})
+	}
 	videoStatusHandler := func(c *gin.Context) {
+		if getGroupPlatform(c) == service.PlatformJiaotu {
+			h.AsyncImage.JiaotuVideoStatus(c)
+			return
+		}
 		// Video status requests do not carry a model, so composite groups cannot
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
 		// the Grok handler and let scheduler/account selection enforce capacity.
@@ -127,6 +153,10 @@ func RegisterGatewayRoutes(
 		})
 	}
 	videoContentHandler := func(c *gin.Context) {
+		if getGroupPlatform(c) == service.PlatformJiaotu {
+			h.AsyncImage.JiaotuVideoContent(c)
+			return
+		}
 		// Video content requests do not carry a model, so composite groups cannot
 		// be resolved by compositeTargetPlatformMiddleware. Route them through
 		// the Grok handler just like video status lookups.
@@ -278,6 +308,8 @@ func RegisterGatewayRoutes(
 		gateway.GET("/videos/generations/:request_id", videoStatusHandler)
 		gateway.GET("/videos/edits/:request_id", videoStatusHandler)
 		gateway.GET("/videos/extensions/:request_id", videoStatusHandler)
+		// 创作记录页的历史列表：必须挂在 /videos/:request_id 之前，否则会被当成 task id 吞掉。
+		gateway.GET("/videos", videoListHandler)
 		gateway.GET("/videos/:request_id", videoStatusHandler)
 		gateway.GET("/videos/:request_id/content", videoContentHandler)
 
@@ -413,6 +445,7 @@ func RegisterGatewayRoutes(
 	rootRoute(http.MethodPost, "/images/edits/async", bodyLimit, h.AsyncImage.Submit)
 	rootRoute(http.MethodGet, "/images/tasks/:task_id", bodyLimit, h.AsyncImage.Get)
 	rootRoute(http.MethodPost, "/videos", bodyLimit, videoGenerationHandler)
+	rootRoute(http.MethodGet, "/videos", bodyLimit, videoListHandler)
 	rootRoute(http.MethodPost, "/videos/generations", bodyLimit, videoGenerationHandler)
 	rootRoute(http.MethodPost, "/videos/edits", bodyLimit, videoEditHandler)
 	rootRoute(http.MethodPost, "/videos/extensions", bodyLimit, videoExtensionHandler)

@@ -29,6 +29,10 @@ const (
 	PlatformDeepseek  = "deepseek" // DeepSeek
 	PlatformMiniMax   = "minimax"  // MiniMax (M 系列)
 	PlatformComposite = "composite"
+	// 椒图（Jiaotu）：国内 AI 图片/视频聚合上游，直连 https://api.jiaotuai.cn，
+	// 走 imageChat SSE 协议 + 多账号积分池调度（协议见 docs/JIAOTU_NATIVE_INTEGRATION.md）。
+	// 凭据形如 {"token": "...", "points": 49, "jiaotu_id": "jp-9"}，一个账号 = 一个椒图号。
+	PlatformJiaotu = "jiaotu"
 )
 
 // Account mode constants 区分国产供应商的「按量付费（余额）」与「Coding Plan」两种接入方式。

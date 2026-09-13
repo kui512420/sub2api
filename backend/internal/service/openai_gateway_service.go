@@ -453,6 +453,8 @@ type OpenAIGatewayService struct {
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	liveAttestation       liveattestation.Provider
 	liveAttestationCipher SecretEncryptor
+	// jiaotuStore 仅用于单测注入椒图状态回写依赖；为 nil 时使用 accountRepo。
+	jiaotuStore JiaotuAccountStore
 
 	openaiWSPoolOnce               sync.Once
 	openaiWSStateStoreOnce         sync.Once

@@ -1158,6 +1158,31 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 		return
 	}
 
+	// 椒图分组的模型来自上游实时目录（失败时回退本地稳定表），
+	// 绝不能落到下面的 Claude 默认表。
+	if platform == service.PlatformJiaotu {
+		entries := h.openAIGatewayService.JiaotuModelsForListing(c.Request.Context())
+		if apiKey != nil && apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
+			allowed := map[string]struct{}{}
+			ids := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				ids = append(ids, entry.ID)
+			}
+			for _, id := range apiKey.Group.ModelAllowlist.FilterForListing(ids) {
+				allowed[id] = struct{}{}
+			}
+			filtered := make([]service.JiaotuCatalogEntry, 0, len(allowed))
+			for _, entry := range entries {
+				if _, ok := allowed[entry.ID]; ok {
+					filtered = append(filtered, entry)
+				}
+			}
+			entries = filtered
+		}
+		c.JSON(http.StatusOK, gin.H{"object": "list", "data": entries})
+		return
+	}
+
 	// Get available models from account configurations for the selected group platform.
 	availableModels := h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, platform)
 	if apiKey != nil && apiKey.Group != nil && apiKey.Group.ModelAllowlistEnabled() {
@@ -1405,6 +1430,12 @@ func writeOpenAIModelsList(c *gin.Context, modelIDs []string) {
 
 	models := make([]openai.Model, 0, len(modelIDs))
 	for _, modelID := range modelIDs {
+		if displayName := service.JiaotuImageModelName(modelID); displayName != "" {
+			models = append(models, openai.Model{
+				ID: modelID, Object: "model", OwnedBy: "jiaotu", Type: "image", DisplayName: displayName,
+			})
+			continue
+		}
 		if model, ok := defaultsByID[modelID]; ok {
 			models = append(models, model)
 			continue
@@ -1469,6 +1500,8 @@ func defaultModelIDsForPlatform(platform string) []string {
 		return claude.DefaultModelIDs()
 	case service.PlatformGrok:
 		return xai.DefaultModelIDs()
+	case service.PlatformJiaotu:
+		return service.JiaotuDefaultModelIDs()
 	case service.PlatformComposite:
 		ids := make([]string, 0)
 		seen := make(map[string]struct{})

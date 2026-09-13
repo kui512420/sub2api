@@ -467,7 +467,22 @@ func applyOpenAIImagesDefaults(req *OpenAIImagesRequest) {
 }
 
 func isOpenAIImageGenerationModel(model string) bool {
-	return IsGPTImageGenerationModel(model) || isGrokImageGenerationModel(model)
+	return IsGPTImageGenerationModel(model) || isGrokImageGenerationModel(model) || isJiaotuImageGenerationModel(model)
+}
+
+func isJiaotuImageGenerationModel(model string) bool {
+	return IsJiaotuImageModel(model)
+}
+
+// JiaotuImageModelName 返回上游原始模型名（showModelName），用于区分「协议」与「厂商」：
+// OpenAI 兼容协议不等于 OpenAI 模型。视频能力返回 ""（图片端点不接受视频模型）。
+// 完整稳定 ID / 能力 / 上游 modelId 请走 JiaotuModelSpecFor。
+func JiaotuImageModelName(model string) string {
+	spec, ok := JiaotuModelSpecFor(model)
+	if !ok || spec.Capability != JiaotuCapabilityImage {
+		return ""
+	}
+	return spec.ProviderName
 }
 
 // IsGPTImageGenerationModel identifies the GPT native image-generation model family.
@@ -570,6 +585,10 @@ func (s *OpenAIGatewayService) ForwardImages(
 ) (*OpenAIForwardResult, error) {
 	if parsed == nil {
 		return nil, fmt.Errorf("parsed images request is required")
+	}
+	// 椒图为原生上游（imageChat），不走 OpenAI 兼容转发。
+	if account.IsJiaotu() {
+		return s.forwardJiaotuImages(ctx, c, account, body, parsed, channelMappedModel)
 	}
 	switch account.Type {
 	case AccountTypeAPIKey:

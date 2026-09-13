@@ -44,6 +44,11 @@ func (s *asyncImageMemoryStore) Get(_ context.Context, id string) (*service.Imag
 	return &copy, nil
 }
 
+// ListByPrefix 内存桩不支持遍历：这些用例只验单任务行为，返回空即可。
+func (s *asyncImageMemoryStore) ListByPrefix(_ context.Context, _ string) ([]*service.ImageTaskRecord, error) {
+	return nil, nil
+}
+
 func TestAsyncImageHandlerSubmitAndPoll(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
@@ -142,4 +147,47 @@ func TestAsyncImageHandlerDisabledReturns404(t *testing.T) {
 
 	// No task was created / persisted.
 	require.Empty(t, store.tasks)
+}
+
+func TestAsyncImageHandlerRejectsNonImageSuccessPayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
+	tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
+	h := &AsyncImageHandler{tasks: tasks}
+	h.execute = func(_ string, c *gin.Context) {
+		// A 200 with valid JSON is not enough to mark an image task completed.
+		c.JSON(http.StatusOK, gin.H{"metadata": gin.H{"b64_json": "c2VjcmV0"}})
+	}
+
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		groupID := int64(3)
+		c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+			ID: 9, UserID: 7, GroupID: &groupID,
+			Group: &service.Group{ID: groupID, Platform: service.PlatformOpenAI, AllowImageGeneration: true},
+		})
+		c.Next()
+	})
+	router.POST("/v1/images/generations/async", h.Submit)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations/async", strings.NewReader(`{"model":"gpt-image-1","prompt":"cat"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusAccepted, w.Code)
+
+	var accepted struct {
+		TaskID string `json:"task_id"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &accepted))
+	require.Eventually(t, func() bool {
+		store.mu.RLock()
+		defer store.mu.RUnlock()
+		task, ok := store.tasks[accepted.TaskID]
+		return ok && task.Status == service.ImageTaskStatusFailed
+	}, time.Second, 10*time.Millisecond)
+	store.mu.RLock()
+	result := append([]byte(nil), store.tasks[accepted.TaskID].Result...)
+	store.mu.RUnlock()
+	require.NotContains(t, string(result), "secret")
 }

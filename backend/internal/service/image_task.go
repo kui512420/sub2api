@@ -67,6 +67,9 @@ type ImageTaskOwner struct {
 type ImageTaskStore interface {
 	Save(ctx context.Context, task *ImageTaskRecord, ttl time.Duration) error
 	Get(ctx context.Context, id string) (*ImageTaskRecord, error)
+	// ListByPrefix 按任务 id 前缀遍历现存任务（含归属/过期过滤前的原始记录），
+	// 供“创作记录”这类历史列表端点使用。结果不保证顺序，由调用方排序。
+	ListByPrefix(ctx context.Context, prefix string) ([]*ImageTaskRecord, error)
 }
 
 // ImageStorageResolver reports the currently effective object-storage binding.
@@ -143,6 +146,15 @@ func (s *ImageTaskService) Pollable() bool {
 	return s != nil && s.store != nil
 }
 
+// Store 暴露底层任务存储，供其他任务类型（如椒图视频）复用同一份 Redis 存储，
+// 而不必复用图片的结果校验语义。
+func (s *ImageTaskService) Store() ImageTaskStore {
+	if s == nil {
+		return nil
+	}
+	return s.store
+}
+
 func (s *ImageTaskService) ExecutionTimeout() time.Duration {
 	if s == nil || s.executionTimeout <= 0 {
 		return defaultImageTaskExecutionTimeout
@@ -188,10 +200,13 @@ func (s *ImageTaskService) Get(ctx context.Context, owner ImageTaskOwner, id str
 }
 
 func (s *ImageTaskService) Complete(ctx context.Context, id string, statusCode int, result json.RawMessage) error {
-	if !json.Valid(result) {
-		return s.Fail(ctx, id, http.StatusBadGateway, imageTaskErrorJSON("api_error", "upstream returned a non-JSON image response"))
+	uploader, _ := s.current()
+	allowInlinePayloads := uploader != nil
+	if err := validateImageTaskResult(result, allowInlinePayloads, allowInlinePayloads, !allowInlinePayloads, defaultImageMaxDownloadBytes); err != nil {
+		logger.L().Warn("image_task.invalid_result", zap.String("task_id", id), zap.Error(err))
+		return s.Fail(ctx, id, http.StatusBadGateway, imageTaskErrorJSON("api_error", "upstream returned a non-JSON or invalid image response"))
 	}
-	if uploader, _ := s.current(); uploader != nil {
+	if uploader != nil {
 		rewritten, err := uploader.Rewrite(ctx, id, result)
 		if err != nil {
 			// 转存失败不回退存 base64，避免大 blob 撑爆 Redis：直接把任务标记为失败。
@@ -200,11 +215,19 @@ func (s *ImageTaskService) Complete(ctx context.Context, id string, statusCode i
 		}
 		result = rewritten
 	}
+	// A nil uploader is only useful in unit tests. Keep the service defensive if
+	// a caller invokes Complete directly while object storage is disabled.
+	if err := validateImageTaskResult(result, false, false, uploader == nil, defaultImageMaxDownloadBytes); err != nil {
+		logger.L().Warn("image_task.result_not_safe_for_store", zap.String("task_id", id), zap.Error(err))
+		return s.Fail(ctx, id, http.StatusBadGateway, imageTaskErrorJSON("api_error", "generated image result cannot be stored safely"))
+	}
 	return s.finish(ctx, id, ImageTaskStatusCompleted, statusCode, result, nil)
 }
 
 func (s *ImageTaskService) Fail(ctx context.Context, id string, statusCode int, taskErr json.RawMessage) error {
-	if !json.Valid(taskErr) {
+	if sanitized := sanitizeImageTaskResult(taskErr); sanitized != nil {
+		taskErr = sanitized
+	} else {
 		taskErr = imageTaskErrorJSON("api_error", "image generation failed")
 	}
 	return s.finish(ctx, id, ImageTaskStatusFailed, statusCode, nil, taskErr)
@@ -239,15 +262,17 @@ func imageTaskToPublic(task *ImageTaskRecord) *ImageTask {
 	if task == nil {
 		return nil
 	}
+	publicResult := sanitizeImageTaskResult(task.Result)
+	publicError := sanitizeImageTaskResult(task.Error)
 	return &ImageTask{
 		ID:          task.ID,
 		TaskID:      task.ID,
 		Object:      "image.generation.task",
 		Status:      task.Status,
 		HTTPStatus:  task.HTTPStatus,
-		ImageURL:    firstImageTaskURL(task.Result),
-		Result:      task.Result,
-		Error:       task.Error,
+		ImageURL:    firstImageTaskURL(publicResult),
+		Result:      publicResult,
+		Error:       publicError,
 		CreatedAt:   task.CreatedAt,
 		CompletedAt: task.CompletedAt,
 		ExpiresAt:   task.ExpiresAt,

@@ -47,6 +47,8 @@ type gatewayModelItemForTest struct {
 	Object                  string                                `json:"object"`
 	Created                 int64                                 `json:"created"`
 	OwnedBy                 string                                `json:"owned_by"`
+	Type                    string                                `json:"type"`
+	DisplayName             string                                `json:"display_name"`
 	CreatedAt               string                                `json:"created_at"`
 	SupportsReasoningEffort bool                                  `json:"supportsReasoningEffort"`
 	ReasoningEffort         string                                `json:"reasoningEffort"`
@@ -1306,6 +1308,35 @@ func TestGatewayModels_OpenAICustomModelsListKeepsOpenAIResponseShapeForDefaultF
 	require.NotZero(t, got.Data[0].Created)
 	require.Equal(t, "openai", got.Data[0].OwnedBy)
 	require.Empty(t, got.Data[0].CreatedAt)
+}
+
+func TestWriteOpenAIModelsList_JiaotuAndUnknownModelMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	writeOpenAIModelsList(c, []string{"jiaotu-image-v2", "unmapped-model"})
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var got gatewayModelsResponseForTest
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &got))
+	require.Len(t, got.Data, 2)
+
+	jiaotu := got.Data[0]
+	require.Equal(t, "jiaotu-image-v2", jiaotu.ID)
+	require.Equal(t, "model", jiaotu.Object)
+	require.Equal(t, "jiaotu", jiaotu.OwnedBy)
+	require.Equal(t, "image", jiaotu.Type)
+	require.Equal(t, "全能图片 V2", jiaotu.DisplayName)
+	require.Zero(t, jiaotu.Created)
+
+	unknown := got.Data[1]
+	require.Equal(t, "unmapped-model", unknown.ID)
+	require.Equal(t, "model", unknown.Object)
+	require.Equal(t, "openai", unknown.OwnedBy)
+	require.Equal(t, "model", unknown.Type)
+	require.Equal(t, "unmapped-model", unknown.DisplayName)
+	require.NotZero(t, unknown.Created)
 }
 
 func modelIDsForTest(models []gatewayModelItemForTest) []string {

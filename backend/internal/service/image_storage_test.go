@@ -200,6 +200,24 @@ func TestImageResultUploaderNilStoragePassthrough(t *testing.T) {
 	require.JSONEq(t, string(result), string(out))
 }
 
+func TestImageResultUploaderRejectsMissingOrEmptyData(t *testing.T) {
+	uploader := NewImageResultUploader(&fakeImageStorage{}, "images/", 0, nil)
+	for _, result := range []json.RawMessage{
+		json.RawMessage(`{"ok":true}`),
+		json.RawMessage(`{"data":[]}`),
+	} {
+		_, err := uploader.Rewrite(context.Background(), "imgtask_invalid", result)
+		require.Error(t, err)
+	}
+}
+
+func TestImageResultUploaderRejectsNestedBase64Payload(t *testing.T) {
+	uploader := NewImageResultUploader(&fakeImageStorage{}, "images/", 0, nil)
+	result := json.RawMessage(`{"data":[{"url":"https://example.test/image.png","metadata":{"b64_json":"c2VjcmV0"}}]}`)
+	_, err := uploader.Rewrite(context.Background(), "imgtask_nested", result)
+	require.ErrorContains(t, err, "nested b64_json")
+}
+
 func TestImageTaskServiceCompleteOffloadsToStorage(t *testing.T) {
 	store := &imageTaskMemoryStore{}
 	storage := &fakeImageStorage{}

@@ -49,6 +49,8 @@ const (
 	PlatformDeepseek  = domain.PlatformDeepseek
 	PlatformMiniMax   = domain.PlatformMiniMax
 	PlatformComposite = domain.PlatformComposite
+	// PlatformJiaotu 椒图（图片/视频聚合上游）：原生 imageChat SSE 协议 + 积分号池调度。
+	PlatformJiaotu = domain.PlatformJiaotu
 	// PlatformKiro is retained for unsupported-platform threshold tests and legacy
 	// account rows. Scheduling-threshold evaluation never pauses kiro accounts.
 	PlatformKiro = "kiro"
@@ -135,6 +137,22 @@ func IsAllowedQuotaPlatform(s string) bool {
 		}
 	}
 	return false
+}
+
+// ShouldAccumulateUserPlatformQuota 判断一笔消费是否要计入 user × platform 配额。
+//
+// 单一守卫口径：只有 AllowedQuotaPlatforms 白名单内的平台才可能拥有配额行 ——
+// admin 侧设置配额走 IsAllowedQuotaPlatform 校验，注册快照只遍历本列表，
+// DB 侧 user_platform_quotas_platform_check 也是同一份枚举。白名单外的平台
+// （例如原生图片/视频上游 jiaotu）必然没有配额行，写入只会：
+//   - 触发 CHECK 违反 → 每次请求一条 ALERT 错误日志；
+//   - flusher 模式下把脏项带进 BatchSnapshotUsage 的多行 UPSERT，
+//     一行违约整批失败，殃及同批其他平台的用量持久化。
+//
+// 因此这里直接跳过，而不是依赖 HasUserPlatformQuotaLimit 的 fail-safe（它在
+// cache miss 时返回 true，挡不住未知平台）。
+func ShouldAccumulateUserPlatformQuota(platform string) bool {
+	return platform != "" && IsAllowedQuotaPlatform(platform)
 }
 
 // Account type constants

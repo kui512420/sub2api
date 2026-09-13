@@ -169,7 +169,7 @@ func apiKeyAuthWithSubscription(apiKeyService *service.APIKeyService, subscripti
 		// Async image task polling only reads data that already belongs to the
 		// authenticated key and must remain available after the completed
 		// generation consumes the key's remaining balance.
-		skipBilling := c.Request.URL.Path == "/v1/usage" || billingInfoRequest || isAsyncImageTaskRead(c.Request.Method, c.Request.URL.Path)
+		skipBilling := c.Request.URL.Path == "/v1/usage" || billingInfoRequest || isAsyncMediaTaskRead(c.Request.Method, c.Request.URL.Path)
 
 		// ── 4. SimpleMode → early return ─────────────────────────────
 
@@ -333,11 +333,44 @@ func isOpenAICompatibleAPIKeyRequest(c *gin.Context) bool {
 	return false
 }
 
-func isAsyncImageTaskRead(method, path string) bool {
+// isAsyncMediaTaskRead 判定是否为「只读的异步媒体任务查询」（图片 / 视频）。
+//
+// 这些端点只读取已归属于当前 Key 的数据，必须与计费解耦：视频/图片生成会扣掉
+// Key 的余额，若余额耗尽后连自己刚生成的结果都拉不回来，创作记录页就会变成
+// 「明明有片子却看不到」——实测就是这么踩到的（GET /v1/videos 403 INSUFFICIENT_BALANCE）。
+// 生成类端点（POST）不受此影响，仍走完整计费检查。
+func isAsyncMediaTaskRead(method, path string) bool {
 	if method != http.MethodGet {
 		return false
 	}
-	return strings.HasPrefix(path, "/v1/images/tasks/") || strings.HasPrefix(path, "/images/tasks/")
+	if strings.HasPrefix(path, "/v1/images/tasks/") || strings.HasPrefix(path, "/images/tasks/") {
+		return true
+	}
+	// 视频任务：列表与单查/内容拉取。注意列表是精确的 /v1/videos，
+	// 不能用 /v1/videos/ 前缀 —— 会把 /v1/videos/generations 这个「创建」端点也放进来。
+	return jiaotuVideoReadPath(path)
+}
+
+// jiaotuVideoReadPath 匹配视频任务只读端点（列表 / 状态 / 内容）。
+func jiaotuVideoReadPath(path string) bool {
+	videoReadPrefixes := []string{
+		"/v1/videos/generations/",
+		"/v1/videos/edits/",
+		"/v1/videos/extensions/",
+		"/v1/videos/vidtask_",
+		"/videos/generations/",
+		"/videos/edits/",
+		"/videos/extensions/",
+	}
+	if path == "/v1/videos" || path == "/videos" {
+		return true
+	}
+	for _, prefix := range videoReadPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetAPIKeyFromContext 从上下文中获取API key

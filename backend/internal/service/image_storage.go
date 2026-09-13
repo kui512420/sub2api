@@ -64,21 +64,27 @@ func (u *ImageResultUploader) Rewrite(ctx context.Context, taskID string, result
 	if u == nil || u.storage == nil {
 		return result, nil
 	}
+	maxImageBytes := u.maxDownloadBytes
+	if maxImageBytes <= 0 {
+		maxImageBytes = defaultImageMaxDownloadBytes
+	}
+	if err := validateImageTaskResult(result, true, true, false, maxImageBytes); err != nil {
+		return nil, err
+	}
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(result, &top); err != nil {
 		return nil, fmt.Errorf("parse image response: %w", err)
 	}
 	rawData, ok := top["data"]
 	if !ok {
-		// 没有 data 数组（结构不符合预期），保持原样返回，交由上层决定。
-		return result, nil
+		return nil, errors.New("image response is missing data")
 	}
 	var items []map[string]json.RawMessage
 	if err := json.Unmarshal(rawData, &items); err != nil {
 		return nil, fmt.Errorf("parse image response data: %w", err)
 	}
 	if len(items) == 0 {
-		return result, nil
+		return nil, errors.New("image response data is empty")
 	}
 	for i, item := range items {
 		data, contentType, err := u.fetchImageBytes(ctx, item)
@@ -113,14 +119,15 @@ func (u *ImageResultUploader) Rewrite(ctx context.Context, taskID string, result
 func (u *ImageResultUploader) fetchImageBytes(ctx context.Context, item map[string]json.RawMessage) ([]byte, string, error) {
 	if raw, ok := item["b64_json"]; ok {
 		var b64 string
-		if err := json.Unmarshal(raw, &b64); err == nil {
-			if b64 = strings.TrimSpace(b64); b64 != "" {
-				data, err := base64.StdEncoding.DecodeString(b64)
-				if err != nil {
-					return nil, "", fmt.Errorf("decode b64_json: %w", err)
-				}
-				return data, detectImageContentType(data), nil
+		if err := json.Unmarshal(raw, &b64); err != nil {
+			return nil, "", errors.New("b64_json must be a string")
+		}
+		if b64 = strings.TrimSpace(b64); b64 != "" {
+			data, err := base64.StdEncoding.DecodeString(b64)
+			if err != nil {
+				return nil, "", fmt.Errorf("decode b64_json: %w", err)
 			}
+			return data, detectImageContentType(data), nil
 		}
 	}
 	if raw, ok := item["url"]; ok {

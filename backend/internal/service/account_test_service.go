@@ -351,6 +351,11 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 		return nil
 	}
 
+	// 椒图：连通性只能用免费的 userBilling/page，imageChat 是计费接口。
+	if account.IsJiaotu() {
+		return s.testJiaotuAccountConnection(c, account)
+	}
+
 	// Route to platform-specific test method
 	if account.IsCNProvider() {
 		switch account.GetAPIProtocol() {
@@ -382,6 +387,65 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 	}
 
 	return s.testClaudeAccountConnection(c, account, modelID)
+}
+
+// testJiaotuAccountConnection 用免费的积分查询（E6）验证椒图账号是否可用。
+// imageChat 会消耗积分，绝不可用于连通性探测；探测成功时顺手同步积分与健康态。
+func (s *AccountTestService) testJiaotuAccountConnection(c *gin.Context, account *Account) error {
+	ctx := c.Request.Context()
+	s.sendEvent(c, TestEvent{Type: "test_start", Model: "jiaotu"})
+
+	if account.JiaotuToken() == "" {
+		markJiaotuAccountExpired(ctx, s.accountRepo, account, "缺少 token 凭据")
+		return s.sendErrorAndEnd(c, "椒图账号缺少 token 凭据")
+	}
+
+	client := NewJiaotuClient(JiaotuSettingsFromConfig(s.cfg))
+	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	points, err := client.RefreshPoints(callCtx, account.JiaotuToken(), "")
+	if err != nil {
+		HandleJiaotuAccountError(ctx, s.accountRepo, account, err)
+		message := err.Error()
+		if jerr, ok := IsJiaotuError(err); ok && jerr.Kind == JiaotuErrAuth {
+			message = "椒图登录已失效（token 无 refresh 能力），需重新录入或补号"
+		}
+		return s.sendErrorAndEnd(c, message)
+	}
+
+	patchJiaotuAccountState(ctx, s.accountRepo, account, func(creds map[string]any) {
+		creds[JiaotuCredentialPoints] = points
+		creds[JiaotuCredentialPointsAt] = time.Now().UTC().Format(time.RFC3339)
+		creds[JiaotuCredentialUpstreamStatus] = JiaotuUpstreamStatusOK
+		creds[JiaotuCredentialLastError] = nil
+	}, "", false)
+
+	s.sendEvent(c, TestEvent{Type: "content", Text: fmt.Sprintf("椒图账号可用，当前积分 %d", points)})
+	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
+}
+
+// JiaotuSignInEnabled 报告 jiaotu.sign_in_enabled，供维护请求决定默认是否签到。
+func (s *AccountTestService) JiaotuSignInEnabled() bool {
+	return s != nil && JiaotuSignInEnabledByConfig(s.cfg)
+}
+
+// JiaotuPoolMaintenance 供管理端触发的椒图号池批量维护（积分刷新 / 每日签到）。
+// 全部是免费接口，不消耗积分；单号失败不影响其他号。
+func (s *AccountTestService) JiaotuPoolMaintenance(ctx context.Context, opts JiaotuPoolMaintenanceOptions) (JiaotuPoolMaintenanceResult, error) {
+	if s == nil || s.accountRepo == nil {
+		return JiaotuPoolMaintenanceResult{}, ErrJiaotuNotMaintainable
+	}
+	accounts, err := s.accountRepo.ListByPlatform(ctx, PlatformJiaotu)
+	if err != nil {
+		return JiaotuPoolMaintenanceResult{}, err
+	}
+	pointers := make([]*Account, 0, len(accounts))
+	for index := range accounts {
+		pointers = append(pointers, &accounts[index])
+	}
+	return runJiaotuPoolMaintenance(ctx, NewJiaotuClient(JiaotuSettingsFromConfig(s.cfg)), s.accountRepo, pointers, opts), nil
 }
 
 func (s *AccountTestService) testCNProviderChatCompletionsConnection(c *gin.Context, account *Account, modelID string, prompt string) error {

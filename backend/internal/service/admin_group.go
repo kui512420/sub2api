@@ -294,6 +294,8 @@ func defaultModelsListCandidateIDs(platform string) []string {
 		return ids
 	case PlatformGrok:
 		return xai.DefaultModelIDs()
+	case PlatformJiaotu:
+		return JiaotuDefaultModelIDs()
 	case PlatformComposite:
 		return compositeDefaultModelsListCandidateIDs()
 	default:
@@ -308,7 +310,8 @@ func defaultModelsListCandidateIDs(platform string) []string {
 func defaultAllowImageGenerationForPlatform(platform string) bool {
 	// Grok image and video generation routes share the legacy image-generation gate.
 	// Older clients send the false zero value, so Grok groups must default enabled.
-	return platform == PlatformGrok
+	// 椒图分组本身就是图片/视频上游，同样必须默认开启，否则 /v1/images 会被权限门直接拒掉。
+	return platform == PlatformGrok || platform == PlatformJiaotu
 }
 
 func compositeDefaultModelsListCandidateIDs() []string {

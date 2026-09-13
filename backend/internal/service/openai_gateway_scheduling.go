@@ -292,11 +292,25 @@ func (s *OpenAIGatewayService) SelectAccountForTokenCount(
 // handler 调度入口仍需导出，保持导出名。）
 func NormalizeOpenAICompatiblePlatform(platform string) string {
 	switch platform {
-	case PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax:
+	// 椒图必须保持原值：归并进 openai 候选池会导致「椒图分组查不到椒图账号」，
+	// 并把 OpenAI 账号误派去跑 imageChat。文本端点对椒图分组的隔离由路由层保证
+	//（isOpenAIResponsesCompatibleGatewayPlatform 不含 jiaotu）。
+	case PlatformGrok, PlatformKimi, PlatformZhipu, PlatformDeepseek, PlatformMiniMax, PlatformJiaotu:
 		return platform
 	default:
 		return PlatformOpenAI
 	}
+}
+
+// accountServesOpenAIMediaProtocol 判断账号能否服务「以 OpenAI 协议表达的媒体端点」。
+// 椒图入站用 OpenAI Images 协议，但上游是原生 imageChat，不属于 OpenAI 兼容供应商，
+// 因此不能放进 IsOpenAICompatible（那会连 chat/responses 也把它当可选号）。
+// 调用点均先比过「账号平台 == 请求平台」，文本端点的椒图分组已在路由层被挡下。
+func accountServesOpenAIMediaProtocol(account *Account) bool {
+	if account == nil {
+		return false
+	}
+	return account.IsOpenAICompatible() || account.IsJiaotu()
 }
 
 // noAvailableOpenAISelectionError builds the standard "no account available" error
@@ -392,7 +406,7 @@ func openAICompatibleAccountEligibilityFailureReasonBeforeProfit(ctx context.Con
 	if account == nil {
 		return "account_nil"
 	}
-	if account.Platform != platform || !account.IsOpenAICompatible() {
+	if account.Platform != platform || !accountServesOpenAIMediaProtocol(account) {
 		return "platform_mismatch"
 	}
 	if !account.IsSchedulableForModelWithContext(ctx, requestedModel) {

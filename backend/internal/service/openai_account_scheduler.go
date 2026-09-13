@@ -521,7 +521,7 @@ func (s *defaultOpenAIAccountScheduler) selectBySessionHash(
 		clearBinding()
 		return nil, false, nil
 	}
-	if shouldClearStickySession(account, req.RequestedModel) || account.Platform != NormalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() || !account.IsSchedulable() {
+	if shouldClearStickySession(account, req.RequestedModel) || account.Platform != NormalizeOpenAICompatiblePlatform(req.Platform) || !accountServesOpenAIMediaProtocol(account) || !account.IsSchedulable() {
 		clearBinding()
 		return nil, false, nil
 	}
@@ -1443,7 +1443,7 @@ func (s *defaultOpenAIAccountScheduler) selectByLoadBalance(
 			filterStats.exclude("not_schedulable")
 			continue
 		}
-		if account.Platform != NormalizeOpenAICompatiblePlatform(req.Platform) || !account.IsOpenAICompatible() {
+		if account.Platform != NormalizeOpenAICompatiblePlatform(req.Platform) || !accountServesOpenAIMediaProtocol(account) {
 			filterStats.exclude("platform_mismatch")
 			continue
 		}
@@ -2137,6 +2137,23 @@ func (s *OpenAIGatewayService) SelectAccountWithSchedulerForImages(
 	return selection, decision, err
 }
 
+// SelectAccountWithSchedulerForPlatformImages 按分组平台选号：
+// 椒图分组走独立候选池（platform=jiaotu），其余保持既有 OpenAI 兼容语义。
+func (s *OpenAIGatewayService) SelectAccountWithSchedulerForPlatformImages(
+	ctx context.Context,
+	groupID *int64,
+	sessionHash string,
+	requestedModel string,
+	excludedIDs map[int64]struct{},
+	requiredCapability OpenAIImagesCapability,
+	platform string,
+) (*AccountSelectionResult, OpenAIAccountScheduleDecision, error) {
+	if platform != PlatformJiaotu {
+		return s.SelectAccountWithSchedulerForImages(ctx, groupID, sessionHash, requestedModel, excludedIDs, requiredCapability)
+	}
+	return s.selectAccountWithScheduler(ctx, groupID, "", sessionHash, requestedModel, excludedIDs, OpenAIUpstreamTransportHTTPSSE, "", requiredCapability, false, PlatformJiaotu, false, false)
+}
+
 // selectAccountWithScheduler wraps selectAccountWithSchedulerOnce with a
 // fail-open second pass for the proxy stream circuit (#5056): when the only
 // reason no account is available is that every candidate sits behind a
@@ -2236,7 +2253,10 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 	if requiredImageCapability == "" {
 		ctx = s.withOpenAIProfitControlGate(ctx, groupID)
 	}
-	platform = NormalizeOpenAICompatiblePlatform(platform)
+	if platform != PlatformJiaotu {
+		// 椒图是独立候选池（原生图片/视频上游），不得被归并到 openai 兼容池，否则会串号。
+		platform = NormalizeOpenAICompatiblePlatform(platform)
+	}
 	decision := OpenAIAccountScheduleDecision{}
 	preserveGuardianParentBinding := preserveOpenAIGuardianParentBinding(ctx, sessionHash)
 	guardianParentAccountID := int64(0)
@@ -2378,6 +2398,11 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 func accountSupportsOpenAICapabilities(account *Account, requiredCapability OpenAIEndpointCapability, requiredImageCapability OpenAIImagesCapability) bool {
 	if account == nil {
 		return false
+	}
+	if account.IsJiaotu() {
+		// 椒图账号按 OpenAI Images 协议对外表达，但能力由 imageChat 本身决定，
+		// 不适用「必须是 OpenAI 账号」的能力门。
+		return true
 	}
 	return account.SupportsOpenAIEndpointCapability(requiredCapability) &&
 		account.SupportsOpenAIImageCapability(requiredImageCapability)

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -37,6 +38,11 @@ func (s *imageTaskMemoryStore) Get(_ context.Context, _ string) (*ImageTaskRecor
 	}
 	copy := *s.task
 	return &copy, nil
+}
+
+// ListByPrefix 内存桩不支持遍历：这些用例只验单任务生命周期，返回空即可。
+func (s *imageTaskMemoryStore) ListByPrefix(context.Context, string) ([]*ImageTaskRecord, error) {
+	return nil, nil
 }
 
 func TestImageTaskServiceLifecycleAndOwnership(t *testing.T) {
@@ -80,6 +86,44 @@ func TestImageTaskServiceInvalidResultBecomesFailed(t *testing.T) {
 	require.Equal(t, ImageTaskStatusFailed, got.Status)
 	require.Equal(t, http.StatusBadGateway, got.HTTPStatus)
 	require.Contains(t, string(got.Error), "non-JSON")
+}
+
+func TestImageTaskServiceRejectsValidButNonImageResult(t *testing.T) {
+	store := &imageTaskMemoryStore{}
+	svc := NewImageTaskServiceWithOptions(store, time.Hour, time.Minute)
+	created, err := svc.Create(context.Background(), ImageTaskOwner{UserID: 1, APIKeyID: 2})
+	require.NoError(t, err)
+
+	// This is valid JSON, but it is not an OpenAI Images response. In
+	// particular, a b64_json hidden outside data must never reach Redis.
+	result := json.RawMessage(`{"metadata":{"b64_json":"` + base64.StdEncoding.EncodeToString([]byte("secret")) + `"},"ok":true}`)
+	require.NoError(t, svc.Complete(context.Background(), created.ID, http.StatusOK, result))
+
+	got, err := svc.Get(context.Background(), ImageTaskOwner{UserID: 1, APIKeyID: 2}, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, ImageTaskStatusFailed, got.Status)
+	require.Empty(t, got.Result)
+	require.NotContains(t, string(store.task.Result), "secret")
+	require.Contains(t, string(got.Error), "invalid image response")
+}
+
+func TestImageTaskServicePublicResultStripsInlinePayloads(t *testing.T) {
+	store := &imageTaskMemoryStore{task: &ImageTaskRecord{
+		ID:       "imgtask_legacy",
+		UserID:   1,
+		APIKeyID: 2,
+		Status:   ImageTaskStatusCompleted,
+		Result:   json.RawMessage(`{"created":1,"data":[{"url":"data:image/png;base64,ZmFrZQ==","b64_json":"c2VjcmV0","revised_prompt":"cat"}]}`),
+	}}
+	svc := NewImageTaskService(store)
+
+	got, err := svc.Get(context.Background(), ImageTaskOwner{UserID: 1, APIKeyID: 2}, "imgtask_legacy")
+	require.NoError(t, err)
+	require.Empty(t, got.ImageURL)
+	require.NotContains(t, string(got.Result), "b64_json")
+	require.NotContains(t, string(got.Result), "secret")
+	require.NotContains(t, string(got.Result), "data:image")
+	require.Contains(t, string(got.Result), "revised_prompt")
 }
 
 func TestImageTaskServiceMapsStoreFailures(t *testing.T) {

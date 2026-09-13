@@ -44,6 +44,10 @@ type OpenAIImagesUpstreamError struct {
 	// with words instead of an image"), not the account — see
 	// shouldCoolOpenAIImagesToolForError.
 	SynthesizedFromModelText bool
+
+	// ResponseWritten records that this error's JSON body was already flushed to
+	// the client, so the caller must not write a second error response.
+	ResponseWritten bool
 }
 
 func (e *OpenAIImagesUpstreamError) Error() string {
@@ -1130,10 +1134,21 @@ func writeOpenAIImagesUpstreamErrorResponse(c *gin.Context, err *OpenAIImagesUps
 	if param := strings.TrimSpace(err.Param); param != "" {
 		errorObj["param"] = param
 	}
+	// 先置位再写出，确保后续重复调用不会二次写响应。
+	err.ResponseWritten = true
 	c.JSON(err.clientStatusCode(), gin.H{
 		"error": errorObj,
 	})
 	return true
+}
+
+// WriteOpenAIImagesUpstreamErrorResponse 供 handler 在转发层未写出响应时补写终端错误体。
+//
+// 椒图的 invalid_request / model_unavailable 在 NormalizeJiaotuImagesRequest 阶段就返回了，
+// 根本走不到 forwardOpenAIImages* 内部的写出逻辑；若不在这里补写，客户端拿到的就是
+// HTTP 200 + 空 body（非流式心跳已把状态码与 Content-Type 抹平），错误彻底丢失。
+func WriteOpenAIImagesUpstreamErrorResponse(c *gin.Context, err *OpenAIImagesUpstreamError) bool {
+	return writeOpenAIImagesUpstreamErrorResponse(c, err)
 }
 
 func (s *OpenAIGatewayService) writeOpenAIImagesStreamEvent(c *gin.Context, flusher http.Flusher, eventName string, payload []byte) error {

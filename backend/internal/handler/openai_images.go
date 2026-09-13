@@ -147,6 +147,12 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	requestCtx := service.WithOpenAIImagesEndpoint(service.WithOpenAIImageGenerationIntent(c.Request.Context()))
 
 	maxAccountSwitches := h.maxAccountSwitches
+	// 椒图号池按积分逐号消耗：按 jiaotu.max_attempts 收紧换号上限（只影响椒图分组）。
+	if openAIImagesAccountPlatform(apiKey) == service.PlatformJiaotu {
+		if jiaotuCap := h.gatewayService.JiaotuMaxAccountSwitches(); jiaotuCap > 0 && jiaotuCap < maxAccountSwitches {
+			maxAccountSwitches = jiaotuCap
+		}
+	}
 	switchCount := 0
 	profitVetoCount := 0
 	failedAccountIDs := make(map[int64]struct{})
@@ -159,13 +165,14 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 
 	for {
 		reqLog.Debug("openai.images.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
-		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForImages(
+		selection, scheduleDecision, err := h.gatewayService.SelectAccountWithSchedulerForPlatformImages(
 			requestCtx,
 			apiKey.GroupID,
 			sessionHash,
 			routingModel,
 			failedAccountIDs,
 			parsed.RequiredCapability,
+			openAIImagesAccountPlatform(apiKey),
 		)
 		if err != nil {
 			if failoverClientGone(c) {
@@ -177,7 +184,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				zap.Int("excluded_account_count", len(failedAccountIDs)),
 			)
 			if len(failedAccountIDs) == 0 {
-				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, clientRequestModel, routingModel, service.PlatformOpenAI)
+				cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, clientRequestModel, routingModel, openAIImagesAccountPlatform(apiKey))
 				if !cls.ModelNotFound {
 					markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
 				}
@@ -196,7 +203,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 			return
 		}
 		if selection == nil || selection.Account == nil {
-			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, clientRequestModel, routingModel, service.PlatformOpenAI)
+			cls := classifyNoAccountErrorFromGin(c, h.gatewayService, apiKey, clientRequestModel, routingModel, openAIImagesAccountPlatform(apiKey))
 			if !cls.ModelNotFound {
 				markOpsRoutingCapacityLimited(c)
 			}
@@ -275,6 +282,14 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestModel, false, result), false, nil, err)
 					} else {
 						h.gatewayService.ReportOpenAIAccountScheduleResult(account, openAIAccountScheduleModel(c, account, requestModel, false, result), true, nil)
+					}
+					// 终端类错误（椒图 invalid_request / model_unavailable）从来不会调 ForwardImages
+					// 内部的响应写出函数，必须在这里补写 JSON 错误体。否则客户端拿到的是
+					// HTTP 200 + 空 body（心跳抹掉 Content-Type / 状态码），错误彻底丢失。
+					if !retryableServerError && !imageUpstreamErr.ResponseWritten {
+						if wrote := service.WriteOpenAIImagesUpstreamErrorResponse(c, imageUpstreamErr); wrote {
+							service.SetOpsUpstreamError(c, imageUpstreamErr.StatusCode, imageUpstreamErr.Message, "")
+						}
 					}
 					logEvent := "openai.images.upstream_user_error"
 					if retryableServerError {
@@ -433,6 +448,18 @@ func (h *OpenAIGatewayHandler) openAIImagesJSONKeepaliveInterval() time.Duration
 		return 0
 	}
 	return time.Duration(h.cfg.Gateway.ImageNonstreamKeepaliveInterval) * time.Second
+}
+
+// openAIImagesAccountPlatform 决定图片端点从哪个平台候选池选号：
+// 椒图分组走独立候选池（platform=jiaotu），其余保持既有 OpenAI 兼容语义。
+func openAIImagesAccountPlatform(apiKey *service.APIKey) string {
+	if apiKey == nil || apiKey.Group == nil {
+		return service.PlatformOpenAI
+	}
+	if apiKey.Group.Platform == service.PlatformJiaotu {
+		return service.PlatformJiaotu
+	}
+	return service.PlatformOpenAI
 }
 
 func isMultipartImagesContentType(contentType string) bool {
