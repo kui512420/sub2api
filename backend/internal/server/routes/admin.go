@@ -636,6 +636,10 @@ func registerBackupRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAut
 		backup.PUT("/image-storage", gin.HandlerFunc(stepUpAuth), h.Admin.Backup.UpdateImageStorageConfig)
 		backup.POST("/image-storage/test", h.Admin.Backup.TestImageStorageConnection)
 
+		// 生成产物素材库：列举（只读）/ 删除（破坏性，要求 step-up 2FA）
+		backup.GET("/image-storage/objects", h.Admin.Backup.ListStoredObjects)
+		backup.DELETE("/image-storage/objects", gin.HandlerFunc(stepUpAuth), h.Admin.Backup.DeleteStoredObject)
+
 		// 定时备份配置
 		backup.GET("/schedule", h.Admin.Backup.GetSchedule)
 		backup.PUT("/schedule", h.Admin.Backup.UpdateSchedule)

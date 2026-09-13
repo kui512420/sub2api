@@ -483,6 +483,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/admin/media',
+    name: 'AdminMediaLibrary',
+    component: () => import('@/views/admin/MediaLibraryView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Media Library',
+      titleKey: 'admin.media.title',
+      descriptionKey: 'admin.media.description'
+    }
+  },
+  {
     path: '/admin/users',
     name: 'AdminUsers',
     component: () => import('@/views/admin/UsersView.vue'),
