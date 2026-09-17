@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -191,6 +192,9 @@ func (s *PaymentConfigService) CreateProviderInstance(ctx context.Context, req C
 			return nil, err
 		}
 	}
+	if err := validateChannelBonusMultipliers(req.Limits); err != nil {
+		return nil, err
+	}
 	if err := s.validateVisibleMethodEnablementConflicts(ctx, 0, req.ProviderKey, typesStr, req.Enabled); err != nil {
 		return nil, err
 	}
@@ -221,6 +225,48 @@ func validateProviderRequest(providerKey, name, supportedTypes string) error {
 	}
 	// supported_types can be empty (provider accepts no payment types until configured)
 	return nil
+}
+
+// validateChannelBonusMultipliers rejects unusable bonusMultiplier values in a
+// provider instance's limits JSON. An absent or null multiplier means "not
+// configured" and is valid; zero, negative, NaN and Inf are rejected so a bad
+// value cannot silently fall through to the global multiplier.
+func validateChannelBonusMultipliers(limits string) error {
+	raw := strings.TrimSpace(limits)
+	if raw == "" {
+		return nil
+	}
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return infraerrors.BadRequest("VALIDATION_ERROR", "limits must be a JSON object")
+	}
+	for paymentType, entry := range parsed {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(entry, &fields); err != nil {
+			return infraerrors.BadRequest("VALIDATION_ERROR",
+				fmt.Sprintf("limits.%s must be a JSON object", paymentType))
+		}
+		rawMultiplier, ok := fields["bonusMultiplier"]
+		if !ok || string(rawMultiplier) == "null" {
+			continue
+		}
+		var multiplier float64
+		if err := json.Unmarshal(rawMultiplier, &multiplier); err != nil {
+			return infraerrors.BadRequest("INVALID_BONUS_MULTIPLIER",
+				fmt.Sprintf("limits.%s.bonusMultiplier must be a number greater than 0", paymentType))
+		}
+		if !isValidChannelBonusMultiplier(multiplier) {
+			return infraerrors.BadRequest("INVALID_BONUS_MULTIPLIER",
+				fmt.Sprintf("limits.%s.bonusMultiplier must be a finite number greater than 0", paymentType))
+		}
+	}
+	return nil
+}
+
+// isValidChannelBonusMultiplier mirrors payment's acceptance criteria for a
+// channel bonus multiplier (rejects NaN, Inf, zero and negatives).
+func isValidChannelBonusMultiplier(multiplier float64) bool {
+	return !math.IsNaN(multiplier) && !math.IsInf(multiplier, 0) && multiplier > 0
 }
 
 var easyPayCustomMethodCodePattern = regexp.MustCompile(`^[a-z0-9_-]+$`)
@@ -419,6 +465,9 @@ func (s *PaymentConfigService) UpdateProviderInstance(ctx context.Context, id in
 		u.SetSortOrder(*req.SortOrder)
 	}
 	if req.Limits != nil {
+		if err := validateChannelBonusMultipliers(*req.Limits); err != nil {
+			return nil, err
+		}
 		u.SetLimits(*req.Limits)
 	}
 	if req.RefundEnabled != nil {

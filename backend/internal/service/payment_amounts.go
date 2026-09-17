@@ -32,6 +32,33 @@ func calculateCreditedBalance(paymentAmount, multiplier float64) float64 {
 		InexactFloat64()
 }
 
+// isValidBonusMultiplier reports whether a channel-configured bonus multiplier
+// is usable. Shares the global multiplier's acceptance criteria so both paths
+// reject the same values (NaN, Inf, zero and negatives).
+func isValidBonusMultiplier(multiplier float64) bool {
+	return !math.IsNaN(multiplier) && !math.IsInf(multiplier, 0) && multiplier > 0
+}
+
+// resolveChannelBonusMultiplier picks the effective balance recharge multiplier.
+// A channel-configured value overrides the global one; the two never multiply.
+// An unset or invalid channel value falls back to the normalized global value.
+func resolveChannelBonusMultiplier(channelMultiplier *float64, globalMultiplier float64) float64 {
+	if channelMultiplier != nil && isValidBonusMultiplier(*channelMultiplier) {
+		return *channelMultiplier
+	}
+	return normalizeBalanceRechargeMultiplier(globalMultiplier)
+}
+
+// resolveSelectionBonusMultiplier resolves the effective multiplier from the
+// selected instance. A nil selection (or one without a channel multiplier)
+// falls back to the global multiplier.
+func resolveSelectionBonusMultiplier(sel *payment.InstanceSelection, globalMultiplier float64) float64 {
+	if sel == nil {
+		return normalizeBalanceRechargeMultiplier(globalMultiplier)
+	}
+	return resolveChannelBonusMultiplier(sel.BonusMultiplier, globalMultiplier)
+}
+
 func calculateGatewayRefundAmount(orderAmount, payAmount, refundAmount float64, currency string) float64 {
 	if orderAmount <= 0 || payAmount <= 0 || refundAmount <= 0 {
 		return 0

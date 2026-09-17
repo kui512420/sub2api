@@ -53,13 +53,15 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	if s.notificationEmailService != nil {
 		s.notificationEmailService.RememberRecipientLocale(ctx, req.UserID, user.Email, req.Locale)
 	}
+	// NOTE: for balance recharges the credited amount (which may include a
+	// channel-level bonus) can only be computed after the provider instance is
+	// selected, because the bonus multiplier is channel-scoped. Until then
+	// orderAmount is provisional and tracks the amount the user actually pays.
 	orderAmount := req.Amount
 	limitAmount := req.Amount
 	if plan != nil {
 		orderAmount = plan.Price
 		limitAmount = plan.Price
-	} else if req.OrderType == payment.OrderTypeBalance {
-		orderAmount = calculateCreditedBalance(req.Amount, cfg.BalanceRechargeMultiplier)
 	}
 	feeRate := cfg.RechargeFeeRate
 	methodCurrency := payment.DefaultPaymentCurrency
@@ -99,6 +101,12 @@ func (s *PaymentService) CreateOrder(ctx context.Context, req CreateOrderRequest
 	}
 	if oauthResp != nil {
 		return oauthResp, nil
+	}
+	// The instance is now final, so the channel-scoped bonus multiplier is
+	// known: resolve the credited (post-bonus) amount for balance recharges.
+	// Subscription orders keep using the plan price.
+	if plan == nil && req.OrderType == payment.OrderTypeBalance {
+		orderAmount = calculateCreditedBalance(req.Amount, resolveSelectionBonusMultiplier(sel, cfg.BalanceRechargeMultiplier))
 	}
 	order, err := s.createOrderInTx(ctx, req, user, plan, cfg, orderAmount, limitAmount, feeRate, payAmount, sel)
 	if err != nil {

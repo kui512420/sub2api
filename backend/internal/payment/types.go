@@ -207,6 +207,12 @@ type InstanceSelection struct {
 	Config         map[string]string
 	SupportedTypes string // Comma-separated list of supported payment types from the instance
 	PaymentMode    string // Payment display mode: "qrcode", "redirect", "popup"
+	// BonusMultiplier is the channel-level balance recharge bonus multiplier of
+	// the selected instance for the requested payment type. nil means the
+	// channel did not configure one, so callers must fall back to the global
+	// multiplier. Carried here because the service layer no longer holds the
+	// instance row after selection.
+	BonusMultiplier *float64
 }
 
 // Provider defines the interface that all payment providers must implement.

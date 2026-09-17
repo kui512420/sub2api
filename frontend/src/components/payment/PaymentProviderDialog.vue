@@ -287,8 +287,20 @@
                 />
               </div>
             </div>
+            <div class="mt-2">
+              <label class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.limitBonusMultiplier') }}</label>
+              <input
+                type="number"
+                :value="getLimitVal(lt.value, 'bonusMultiplier')"
+                @input="setBonusMultiplier(lt.value, ($event.target as HTMLInputElement).value)"
+                class="input mt-0.5" min="0" step="0.01"
+                :placeholder="t('admin.settings.payment.bonusMultiplierUseGlobal')"
+                data-test="bonus-multiplier"
+              />
+            </div>
           </div>
           <p class="text-xs text-gray-400 dark:text-gray-500">{{ t('admin.settings.payment.limitsHint') }}</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500">{{ t('admin.settings.payment.bonusMultiplierHint') }}</p>
         </div>
       </div>
     </form>
@@ -616,6 +628,23 @@ function getLimitVal(paymentType: string, field: string): string {
   return val && val > 0 ? String(val) : ''
 }
 
+/**
+ * Bonus multiplier has different semantics from the three limit fields:
+ * an empty value means "use the global multiplier" and must not be written to
+ * the limits JSON, while any value > 0 (including exactly 1) is a real
+ * override and must be preserved. Rejecting ≤0/NaN keeps the payload valid.
+ */
+function setBonusMultiplier(paymentType: string, val: string) {
+  if (!limits[paymentType]) limits[paymentType] = {}
+  const num = Number(val)
+  if (val === '' || isNaN(num)) {
+    delete limits[paymentType].bonusMultiplier
+    return
+  }
+  if (num <= 0) return
+  limits[paymentType].bonusMultiplier = num
+}
+
 /** Returns true if any limit field for this payment type has a value */
 function hasAnyLimit(paymentType: string): boolean {
   const l = limits[paymentType]
@@ -647,6 +676,11 @@ function serializeLimits(): string {
   for (const [pt, fields] of Object.entries(limits)) {
     const clean: Record<string, number> = {}
     for (const [k, v] of Object.entries(fields)) {
+      // 0 means "unset" for every field: limits treat 0 as no-limit, and
+      // bonusMultiplier treats it as "use global". A bonusMultiplier of
+      // exactly 1 is a real override and must survive serialization, which
+      // `v > 0` already preserves. Non-positive values never reach here
+      // because the setters reject them.
       if (v > 0) clean[k] = v
     }
     if (Object.keys(clean).length > 0) result[pt] = clean

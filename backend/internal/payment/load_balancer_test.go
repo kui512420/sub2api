@@ -115,6 +115,73 @@ func TestGetInstanceChannelLimitsFallsBackToLegacyDirectAliases(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Channel bonus multiplier resolution
+// ---------------------------------------------------------------------------
+
+func bonusPtr(v float64) *float64 { return &v }
+
+// 渠道倍率与限额必须读同一个键：别名渠道（如 alipay_direct）也要能取到倍率。
+func TestGetInstanceChannelLimitsResolvesBonusUnderLegacyAlias(t *testing.T) {
+	t.Parallel()
+
+	inst := testInstance(1, TypeAlipay, makeLimitsJSON(TypeAlipayDirect, ChannelLimits{BonusMultiplier: bonusPtr(1.2)}))
+	got := getInstanceChannelLimits(inst, TypeAlipay)
+	if got.BonusMultiplier == nil {
+		t.Fatal("bonus multiplier under legacy alias key was not resolved")
+	}
+	if *got.BonusMultiplier != 1.2 {
+		t.Fatalf("bonus multiplier = %v, want 1.2", *got.BonusMultiplier)
+	}
+}
+
+// Stripe 的子类型统一读 "stripe" 键，倍率必须与限额同源。
+func TestGetInstanceChannelLimitsResolvesBonusUnderStripeKey(t *testing.T) {
+	t.Parallel()
+
+	inst := testInstance(1, "stripe", makeLimitsJSON("stripe", ChannelLimits{BonusMultiplier: bonusPtr(1.05)}))
+	got := getInstanceChannelLimits(inst, "card")
+	if got.BonusMultiplier == nil {
+		t.Fatal("bonus multiplier under stripe key was not resolved")
+	}
+	if *got.BonusMultiplier != 1.05 {
+		t.Fatalf("bonus multiplier = %v, want 1.05", *got.BonusMultiplier)
+	}
+}
+
+// 未配置倍率时必须为 nil，不能被当成 0 或 1。
+func TestGetInstanceChannelLimitsLeavesBonusNilWhenUnconfigured(t *testing.T) {
+	t.Parallel()
+
+	inst := testInstance(1, TypeAlipay, makeLimitsJSON(TypeAlipay, ChannelLimits{SingleMax: 100}))
+	if got := getInstanceChannelLimits(inst, TypeAlipay); got.BonusMultiplier != nil {
+		t.Fatalf("bonus multiplier = %v, want nil", *got.BonusMultiplier)
+	}
+
+	empty := testInstance(2, TypeAlipay, "")
+	if got := getInstanceChannelLimits(empty, TypeAlipay); got.BonusMultiplier != nil {
+		t.Fatalf("bonus multiplier from empty limits = %v, want nil", *got.BonusMultiplier)
+	}
+}
+
+// 倍率不参与限额过滤：配置了倍率的渠道不能被金额过滤逻辑误伤。
+func TestBonusMultiplierDoesNotAffectLimitFiltering(t *testing.T) {
+	t.Parallel()
+
+	candidates := []instanceCandidate{
+		{inst: testInstance(1, TypeAlipay, makeLimitsJSON(TypeAlipay, ChannelLimits{SingleMax: 100, BonusMultiplier: bonusPtr(1.2)}))},
+		{inst: testInstance(2, TypeAlipay, makeLimitsJSON(TypeAlipay, ChannelLimits{SingleMax: 50}))},
+	}
+
+	got := filterByLimits(candidates, TypeAlipay, 100)
+	if len(got) != 1 {
+		t.Fatalf("filterByLimits() kept %d candidates, want 1", len(got))
+	}
+	if got[0].inst.ID != 1 {
+		t.Fatalf("surviving candidate = %d, want 1", got[0].inst.ID)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Helper to build test PaymentProviderInstance values
 // ---------------------------------------------------------------------------
 

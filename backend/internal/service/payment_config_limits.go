@@ -291,6 +291,39 @@ func unionFloat(agg float64, limited bool, val float64, wantMin bool) (float64, 
 //   - SingleMax: highest ceiling across instances; 0 if any is unlimited
 //   - DailyLimit: highest cap across instances; 0 if any is unlimited
 func pcAggregateMethodLimits(pt string, instances []*dbent.PaymentProviderInstance) MethodLimits {
+	ml := pcAggregateMethodLimitsUnion(pt, instances)
+	ml.BonusMultiplier, ml.BonusMultiplierVaried = pcAggregateMethodBonusMultiplier(pt, instances)
+	return ml
+}
+
+// pcAggregateMethodBonusMultiplier resolves the preview multiplier for a
+// payment type across the instances that serve it. Instances that did not
+// configure one are ignored (they fall back to the global multiplier, which
+// the caller applies). When the configured values disagree, the first one is
+// reported as an estimate and varied=true — the actual value is decided by
+// whichever instance the load balancer selects at order time.
+func pcAggregateMethodBonusMultiplier(pt string, instances []*dbent.PaymentProviderInstance) (float64, bool) {
+	resolved := 0.0
+	found := false
+	varied := false
+	for _, inst := range instances {
+		cl, hasLimits := pcInstanceTypeLimits(inst, pt)
+		if !hasLimits || cl.BonusMultiplier == nil || *cl.BonusMultiplier <= 0 {
+			continue
+		}
+		if !found {
+			resolved = *cl.BonusMultiplier
+			found = true
+			continue
+		}
+		if *cl.BonusMultiplier != resolved {
+			varied = true
+		}
+	}
+	return resolved, varied
+}
+
+func pcAggregateMethodLimitsUnion(pt string, instances []*dbent.PaymentProviderInstance) MethodLimits {
 	ml := MethodLimits{PaymentType: pt}
 	minLimited, maxLimited, dailyLimited := true, true, true
 

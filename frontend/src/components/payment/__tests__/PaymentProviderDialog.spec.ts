@@ -251,3 +251,84 @@ describe('PaymentProviderDialog payment guide', () => {
     expect(wrapper.emitted('save')).toBeUndefined()
   })
 })
+
+describe('PaymentProviderDialog channel bonus multiplier', () => {
+  function alipayProvider(overrides: Partial<ProviderInstance> = {}): ProviderInstance {
+    return providerFactory({
+      name: 'Alipay',
+      provider_key: 'alipay',
+      supported_types: ['alipay'],
+      config: { appId: 'app-1' },
+      ...overrides,
+    })
+  }
+
+  async function mountExpanded(provider: ProviderInstance) {
+    const wrapper = mountDialog({ editing: provider })
+    ;(wrapper.vm as unknown as { loadProvider: (p: ProviderInstance) => void }).loadProvider(provider)
+    await nextTick()
+    ;(wrapper.vm as unknown as { limitsExpanded: boolean }).limitsExpanded = true
+    await nextTick()
+    return wrapper
+  }
+
+  function bonusInputs(wrapper: ReturnType<typeof mountDialog>) {
+    return wrapper.findAll('input[data-test="bonus-multiplier"]')
+  }
+
+  it('serializes a configured bonus multiplier into the limits JSON', async () => {
+    const wrapper = await mountExpanded(alipayProvider())
+
+    const inputs = bonusInputs(wrapper)
+    expect(inputs.length).toBeGreaterThan(0)
+    await inputs[0].setValue('1.2')
+    await wrapper.find('form').trigger('submit.prevent')
+
+    const payload = wrapper.emitted('save')?.[0]?.[0] as { limits: string }
+    expect(JSON.parse(payload.limits)).toEqual({ alipay: { bonusMultiplier: 1.2 } })
+  })
+
+  it('preserves an explicit multiplier of exactly 1', async () => {
+    const wrapper = await mountExpanded(alipayProvider())
+
+    await bonusInputs(wrapper)[0].setValue('1')
+    await wrapper.find('form').trigger('submit.prevent')
+
+    const payload = wrapper.emitted('save')?.[0]?.[0] as { limits: string }
+    expect(JSON.parse(payload.limits)).toEqual({ alipay: { bonusMultiplier: 1 } })
+  })
+
+  it('omits the bonus multiplier when left empty, keeping sibling limits', async () => {
+    const wrapper = await mountExpanded(alipayProvider())
+
+    await wrapper.findAll('input[type="number"]')[0].setValue('50')
+    await wrapper.find('form').trigger('submit.prevent')
+
+    const payload = wrapper.emitted('save')?.[0]?.[0] as { limits: string }
+    const parsed = JSON.parse(payload.limits)
+    expect(parsed.alipay.singleMin).toBe(50)
+    expect(parsed.alipay).not.toHaveProperty('bonusMultiplier')
+  })
+
+  it('rejects zero and negative multipliers instead of serializing them', async () => {
+    const wrapper = await mountExpanded(alipayProvider())
+
+    const input = bonusInputs(wrapper)[0]
+    await input.setValue('0')
+    await input.setValue('-2')
+    await wrapper.find('form').trigger('submit.prevent')
+
+    const payload = wrapper.emitted('save')?.[0]?.[0] as { limits: string }
+    expect(payload.limits).toBe('')
+  })
+
+  it('round-trips a stored bonus multiplier back into the form', async () => {
+    const provider = alipayProvider({
+      limits: JSON.stringify({ alipay: { singleMax: 100, bonusMultiplier: 1.25 } }),
+    })
+    const wrapper = await mountExpanded(provider)
+
+    const input = bonusInputs(wrapper)[0]
+    expect((input.element as HTMLInputElement).value).toBe('1.25')
+  })
+})

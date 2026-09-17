@@ -128,6 +128,15 @@ type MethodLimits struct {
 	DailyLimit  float64 `json:"daily_limit"`
 	SingleMin   float64 `json:"single_min"`
 	SingleMax   float64 `json:"single_max"`
+	// BonusMultiplier is the effective balance recharge bonus multiplier for
+	// this payment type, already resolved across the instances that serve it
+	// (0 = not configured anywhere, in which case the global multiplier
+	// applies). Clients use it to preview the credited amount per method.
+	BonusMultiplier float64 `json:"bonus_multiplier,omitempty"`
+	// BonusMultiplierVaried is true when instances under this payment type
+	// disagree on the multiplier, so the previewed amount is an estimate and
+	// the final value is decided by the instance the order is routed to.
+	BonusMultiplierVaried bool `json:"bonus_multiplier_varied,omitempty"`
 }
 
 // MethodLimitsResponse is the full response for the user-facing /limits API.

@@ -22,11 +22,19 @@ const (
 	StrategyLeastAmount Strategy = "least-amount"
 )
 
-// ChannelLimits holds limits for a single payment channel within a provider instance.
+// ChannelLimits holds the channel-level parameters for a single payment type
+// within a provider instance. Despite the historical name, it carries both
+// order limits and other per-channel recharge parameters (e.g. the balance
+// bonus multiplier) so that all channel-scoped settings share one read path.
 type ChannelLimits struct {
 	DailyLimit float64 `json:"dailyLimit,omitempty"`
 	SingleMin  float64 `json:"singleMin,omitempty"`
 	SingleMax  float64 `json:"singleMax,omitempty"`
+	// BonusMultiplier is the optional per-channel balance recharge bonus
+	// multiplier. nil means "not configured" (fall back to the global
+	// BALANCE_RECHARGE_MULTIPLIER), which is distinct from an explicit 1.0
+	// (configured, no bonus).
+	BonusMultiplier *float64 `json:"bonusMultiplier,omitempty"`
 }
 
 // InstanceLimits holds per-channel limits for a provider instance (JSON).
@@ -111,7 +119,7 @@ func (lb *DefaultLoadBalancer) SelectInstance(
 
 	// Step 4: pick by strategy.
 	selected := lb.pickByStrategy(available, strategy)
-	return lb.buildSelection(selected.inst)
+	return lb.buildSelection(selected.inst, paymentType)
 }
 
 // queryEnabledInstances returns enabled instances that support paymentType.
@@ -292,7 +300,7 @@ func pickLeastAmount(candidates []instanceCandidate) instanceCandidate {
 	return best
 }
 
-func (lb *DefaultLoadBalancer) buildSelection(selected *dbent.PaymentProviderInstance) (*InstanceSelection, error) {
+func (lb *DefaultLoadBalancer) buildSelection(selected *dbent.PaymentProviderInstance, paymentType PaymentType) (*InstanceSelection, error) {
 	config, err := lb.decryptConfig(selected.Config)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt instance %d config: %w", selected.ID, err)
@@ -305,12 +313,18 @@ func (lb *DefaultLoadBalancer) buildSelection(selected *dbent.PaymentProviderIns
 		config["paymentMode"] = selected.PaymentMode
 	}
 
+	// Resolve the channel-level bonus multiplier with the same key resolution
+	// as the limits (Stripe sub-types collapse to "stripe", plus legacy
+	// visible-method aliases) so limits and bonus never read different keys.
+	bonusMultiplier := getInstanceChannelLimits(selected, paymentType).BonusMultiplier
+
 	return &InstanceSelection{
-		InstanceID:     fmt.Sprintf("%d", selected.ID),
-		ProviderKey:    selected.ProviderKey,
-		Config:         config,
-		SupportedTypes: selected.SupportedTypes,
-		PaymentMode:    selected.PaymentMode,
+		InstanceID:      fmt.Sprintf("%d", selected.ID),
+		ProviderKey:     selected.ProviderKey,
+		Config:          config,
+		SupportedTypes:  selected.SupportedTypes,
+		PaymentMode:     selected.PaymentMode,
+		BonusMultiplier: bonusMultiplier,
 	}, nil
 }
 

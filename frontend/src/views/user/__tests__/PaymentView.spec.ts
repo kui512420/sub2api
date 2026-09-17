@@ -887,3 +887,201 @@ describe('PaymentView subscription feature flag', () => {
     wrapper.unmount()
   })
 })
+
+describe('PaymentView per-channel bonus multiplier', () => {
+  // 渠道倍率覆盖全局倍率，两者不相乘；未配置时回落全局。
+  it('uses the channel multiplier when the selected method configures one', async () => {
+    translate.mockClear()
+    routeState.path = '/purchase'
+    routeState.query = {}
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({
+      balance_recharge_multiplier: 2,
+      methods: {
+        wxpay: {
+          ...checkoutInfoFixture().data.methods.wxpay,
+          bonus_multiplier: 1.2,
+        },
+      },
+    }))
+
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    wrapper.getComponent(AmountInput).vm.$emit('update:modelValue', 100)
+    await flushPromises()
+
+    expect(translate).toHaveBeenCalledWith('payment.rechargeRatePreview', {
+      currency: 'CNY',
+      usd: '1.20',
+    })
+    // 渠道 1.2 优先于全局 2.0，且不相乘（2.4 是错误结果）
+    expect(wrapper.text()).toContain('$120.00')
+    expect(wrapper.text()).not.toContain('$240.00')
+    wrapper.unmount()
+  })
+
+  it('falls back to the global multiplier when the selected method has none', async () => {
+    translate.mockClear()
+    routeState.path = '/purchase'
+    routeState.query = {}
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({
+      balance_recharge_multiplier: 1.5,
+    }))
+
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    wrapper.getComponent(AmountInput).vm.$emit('update:modelValue', 100)
+    await flushPromises()
+
+    expect(translate).toHaveBeenCalledWith('payment.rechargeRatePreview', {
+      currency: 'CNY',
+      usd: '1.50',
+    })
+    expect(wrapper.text()).toContain('$150.00')
+    wrapper.unmount()
+  })
+
+  it('treats an explicit channel multiplier of 1 as configured and hides the bonus row', async () => {
+    translate.mockClear()
+    routeState.path = '/purchase'
+    routeState.query = {}
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({
+      balance_recharge_multiplier: 1.5,
+      methods: {
+        wxpay: {
+          ...checkoutInfoFixture().data.methods.wxpay,
+          bonus_multiplier: 1,
+        },
+      },
+    }))
+
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    wrapper.getComponent(AmountInput).vm.$emit('update:modelValue', 100)
+    await flushPromises()
+
+    // 渠道显式 1.0 覆盖全局 1.5 → 无赠送，隐藏赠送行
+    expect(wrapper.text()).not.toContain('payment.creditedBalance')
+    wrapper.unmount()
+  })
+
+  it('ignores an invalid channel multiplier and falls back to the global one', async () => {
+    translate.mockClear()
+    routeState.path = '/purchase'
+    routeState.query = {}
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({
+      balance_recharge_multiplier: 1.5,
+      methods: {
+        wxpay: {
+          ...checkoutInfoFixture().data.methods.wxpay,
+          bonus_multiplier: 0,
+        },
+      },
+    }))
+
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    wrapper.getComponent(AmountInput).vm.$emit('update:modelValue', 100)
+    await flushPromises()
+
+    expect(translate).toHaveBeenCalledWith('payment.rechargeRatePreview', {
+      currency: 'CNY',
+      usd: '1.50',
+    })
+    wrapper.unmount()
+  })
+
+  it('flags the credited amount as an estimate when channels disagree', async () => {
+    translate.mockClear()
+    routeState.path = '/purchase'
+    routeState.query = {}
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({
+      balance_recharge_multiplier: 1,
+      methods: {
+        wxpay: {
+          ...checkoutInfoFixture().data.methods.wxpay,
+          bonus_multiplier: 1.2,
+          bonus_multiplier_varied: true,
+        },
+      },
+    }))
+
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    wrapper.getComponent(AmountInput).vm.$emit('update:modelValue', 100)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('payment.creditedAmountEstimate')
+    wrapper.unmount()
+  })
+
+  it('does not flag the credited amount when channels agree', async () => {
+    translate.mockClear()
+    routeState.path = '/purchase'
+    routeState.query = {}
+    getCheckoutInfo.mockReset().mockResolvedValue(checkoutInfoFixture({
+      balance_recharge_multiplier: 1,
+      methods: {
+        wxpay: {
+          ...checkoutInfoFixture().data.methods.wxpay,
+          bonus_multiplier: 1.2,
+        },
+      },
+    }))
+
+    const wrapper = shallowMount(PaymentView, {
+      global: {
+        stubs: {
+          AppLayout: { template: '<div><slot /></div>' },
+          Teleport: true,
+          Transition: false,
+        },
+      },
+    })
+    await flushPromises()
+    wrapper.getComponent(AmountInput).vm.$emit('update:modelValue', 100)
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('payment.creditedAmountEstimate')
+    wrapper.unmount()
+  })
+})

@@ -79,12 +79,13 @@
                   <span class="font-medium text-gray-700 dark:text-gray-300">{{ t('payment.actualPay') }}</span>
                   <span class="text-lg font-bold text-primary-600 dark:text-primary-400">{{ formatSelectedPaymentAmount(totalAmount) }}</span>
                 </div>
-                <div v-if="balanceRechargeMultiplier !== 1" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }">
+                <div v-if="effectiveRechargeMultiplier !== 1" class="flex justify-between" :class="{ 'border-t border-gray-200 pt-2 dark:border-dark-600': feeRate <= 0 }">
                   <span class="text-gray-500 dark:text-gray-400">{{ t('payment.creditedBalance') }}</span>
                   <span class="text-gray-900 dark:text-white">${{ creditedAmount.toFixed(2) }}</span>
                 </div>
-                <p v-if="balanceRechargeMultiplier !== 1" class="border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400">
-                  {{ t('payment.rechargeRatePreview', { currency: selectedCurrency, usd: balanceRechargeMultiplier.toFixed(2) }) }}
+                <p v-if="effectiveRechargeMultiplier !== 1" class="border-t border-gray-200 pt-2 text-xs text-gray-500 dark:border-dark-600 dark:text-gray-400">
+                  {{ t('payment.rechargeRatePreview', { currency: selectedCurrency, usd: effectiveRechargeMultiplier.toFixed(2) }) }}
+                  <span v-if="rechargeMultiplierIsEstimate"> · {{ t('payment.creditedAmountEstimate') }}</span>
                 </p>
               </div>
             </div>
@@ -544,12 +545,24 @@ const balanceRechargeMultiplier = computed(() => {
   const multiplier = checkout.value.balance_recharge_multiplier
   return Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1
 })
+// 选定渠道后的赠送倍率：渠道配置覆盖全局（不相乘），与后端 resolveSelectionBonusMultiplier 镜像。
+const effectiveRechargeMultiplier = computed(() => {
+  const channelMultiplier = visibleMethods.value[selectedMethod.value]?.bonus_multiplier
+  if (typeof channelMultiplier === 'number' && Number.isFinite(channelMultiplier) && channelMultiplier > 0) {
+    return channelMultiplier
+  }
+  return balanceRechargeMultiplier.value
+})
+// 同一支付类型下多渠道倍率不一致时，展示值为估算（最终以路由到的实例为准）。
+const rechargeMultiplierIsEstimate = computed(
+  () => visibleMethods.value[selectedMethod.value]?.bonus_multiplier_varied === true,
+)
 // 订阅 CNY 换算汇率（1 USD = X CNY）。0 = 未配置，订阅保持 price 直付（与后端 opt-in 条件严格镜像）。
 const subscriptionUsdToCnyRate = computed(() => {
   const rate = checkout.value.subscription_usd_to_cny_rate
   return Number.isFinite(rate) && rate > 0 ? rate : 0
 })
-const creditedAmount = computed(() => Math.round((validAmount.value * balanceRechargeMultiplier.value) * 100) / 100)
+const creditedAmount = computed(() => Math.round((validAmount.value * effectiveRechargeMultiplier.value) * 100) / 100)
 
 // Adaptive grid: center single card, 2-col for 2 plans, 3-col for 3+
 const planGridClass = computed(() => {

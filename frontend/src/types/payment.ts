@@ -51,6 +51,14 @@ export interface MethodLimit {
   single_max: number
   fee_rate: number
   available: boolean
+  /** Channel-level bonus multiplier for this method (0/absent = use global) */
+  bonus_multiplier?: number
+  /**
+   * True when instances serving this method disagree on the bonus multiplier,
+   * so the previewed credited amount is an estimate — the final value is
+   * decided by the instance the order is routed to.
+   */
+  bonus_multiplier_varied?: boolean
 }
 
 /** Response from /payment/limits API */
